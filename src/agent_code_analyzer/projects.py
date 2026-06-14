@@ -149,6 +149,8 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
             node_count INTEGER NOT NULL,
             has_error INTEGER NOT NULL,
             byte_length INTEGER NOT NULL,
+            file_size INTEGER NOT NULL DEFAULT 0,
+            file_mtime_ns INTEGER NOT NULL DEFAULT 0,
             skeleton TEXT NOT NULL,
             indexed_at TEXT NOT NULL
         );
@@ -174,6 +176,20 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
         """
     )
+
+
+def _ensure_project_schema(conn: sqlite3.Connection) -> None:
+    _init_project_schema(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()}
+    if "file_size" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0")
+    if "file_mtime_ns" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN file_mtime_ns INTEGER NOT NULL DEFAULT 0")
+
+
+def _project_file_snapshot(path: Path) -> dict[str, int]:
+    stat = path.stat()
+    return {"file_size": int(stat.st_size), "file_mtime_ns": int(stat.st_mtime_ns)}
 
 
 def _normalize_project(project: str) -> str:
@@ -238,6 +254,8 @@ def _upsert_file_analysis(
     resolved_path: Path,
     analysis: dict[str, Any],
     indexed_at: str,
+    file_size: int,
+    file_mtime_ns: int,
 ) -> None:
     parsed = analysis["parsed"]
     root_node = parsed.tree.root_node
@@ -248,8 +266,8 @@ def _upsert_file_analysis(
     conn.execute(
         """
         INSERT INTO files (
-            rel_path, abs_path, language, root_type, node_count, has_error, byte_length, skeleton, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rel_path, abs_path, language, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(rel_path) DO UPDATE SET
             abs_path = excluded.abs_path,
             language = excluded.language,
@@ -257,6 +275,8 @@ def _upsert_file_analysis(
             node_count = excluded.node_count,
             has_error = excluded.has_error,
             byte_length = excluded.byte_length,
+            file_size = excluded.file_size,
+            file_mtime_ns = excluded.file_mtime_ns,
             skeleton = excluded.skeleton,
             indexed_at = excluded.indexed_at
         """,
@@ -268,6 +288,8 @@ def _upsert_file_analysis(
             root_node.descendant_count,
             int(root_node.has_error),
             byte_length,
+            file_size,
+            file_mtime_ns,
             skeleton,
             indexed_at,
         ),
@@ -405,7 +427,7 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
             )
 
         with _connect(db_path) as conn:
-            _init_project_schema(conn)
+            _ensure_project_schema(conn)
             conn.execute(
                 """
                 INSERT INTO project_state (
@@ -466,7 +488,7 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
 
     if not refresh:
         with _connect(db_path) as conn:
-            _init_project_schema(conn)
+            _ensure_project_schema(conn)
             row = conn.execute(
                 """
                 SELECT project_name, root_path, file_count, supported_file_count, symbol_count, indexed_at
@@ -480,7 +502,7 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
 
     with _db_lock(db_path):
         with _connect(db_path) as conn:
-            _init_project_schema(conn)
+            _ensure_project_schema(conn)
             if refresh:
                 conn.execute("DELETE FROM symbols")
                 conn.execute("DELETE FROM files")
@@ -496,6 +518,7 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
                     resolved_path=path,
                     analysis=analysis,
                     indexed_at=indexed_at,
+                    **_project_file_snapshot(path),
                 )
                 total_symbols += len(analysis["symbols"])
 
@@ -553,10 +576,150 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
     }
 
 
+def sync_project_tree(project: str) -> dict[str, Any]:
+    project_data = get_project(project)
+    root = Path(project_data["root_path"]).resolve()
+    db_path = Path(project_data["db_path"])
+    now = _now()
+
+    with _db_lock(db_path):
+        with _connect(db_path) as conn:
+            _ensure_project_schema(conn)
+            existing_state = conn.execute(
+                """
+                SELECT project_name, root_path, created_at, updated_at, indexed_at, file_count, supported_file_count, symbol_count
+                FROM project_state
+                WHERE project_name = ?
+                """,
+                (project,),
+            ).fetchone()
+            existing_files = {
+                row["rel_path"]: row
+                for row in conn.execute(
+                    """
+                    SELECT id, rel_path, abs_path, file_size, file_mtime_ns
+                    FROM files
+                    """
+                ).fetchall()
+            }
+
+            current_files: dict[str, Path] = {}
+            current_stats: dict[str, dict[str, int]] = {}
+            for path in _iter_source_files(root):
+                rel_path = str(path.relative_to(root))
+                current_files[rel_path] = path
+                current_stats[rel_path] = _project_file_snapshot(path)
+
+            current_paths = set(current_files)
+            existing_paths = set(existing_files)
+            deleted_paths = sorted(existing_paths - current_paths)
+            upserted_paths: list[str] = []
+            unchanged_paths: list[str] = []
+
+            for rel_path in sorted(current_paths):
+                path = current_files[rel_path]
+                snapshot = current_stats[rel_path]
+                existing_row = existing_files.get(rel_path)
+                if (
+                    existing_row is not None
+                    and int(existing_row["file_size"]) == snapshot["file_size"]
+                    and int(existing_row["file_mtime_ns"]) == snapshot["file_mtime_ns"]
+                ):
+                    unchanged_paths.append(rel_path)
+                    continue
+
+                analysis = analyze_file(str(path))
+                _upsert_file_analysis(
+                    conn,
+                    project=project,
+                    root_path=root,
+                    resolved_path=path,
+                    analysis=analysis,
+                    indexed_at=now,
+                    **snapshot,
+                )
+                upserted_paths.append(rel_path)
+
+            deleted_file_count = 0
+            for rel_path in deleted_paths:
+                row = existing_files[rel_path]
+                conn.execute("DELETE FROM files WHERE id = ?", (int(row["id"]),))
+                deleted_file_count += 1
+
+            if not upserted_paths and deleted_file_count == 0 and existing_state is not None:
+                return {
+                    "project": project,
+                    "root_path": str(root),
+                    "mode": project_data["mode"],
+                    "file_count": int(existing_state["file_count"]),
+                    "supported_file_count": int(existing_state["supported_file_count"]),
+                    "symbol_count": int(existing_state["symbol_count"]),
+                    "indexed_at": existing_state["indexed_at"],
+                    "changed_file_count": 0,
+                    "deleted_file_count": 0,
+                    "unchanged_file_count": len(unchanged_paths),
+                }
+
+            file_count = int(conn.execute("SELECT COUNT(*) AS count FROM files").fetchone()["count"])
+            symbol_count = int(conn.execute("SELECT COUNT(*) AS count FROM symbols").fetchone()["count"])
+            indexed_at = now
+            created_at = existing_state["created_at"] if existing_state else now
+            conn.execute(
+                """
+                INSERT INTO project_state (
+                    project_name, root_path, created_at, updated_at, indexed_at,
+                    file_count, supported_file_count, symbol_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_name) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    updated_at = excluded.updated_at,
+                    indexed_at = excluded.indexed_at,
+                    file_count = excluded.file_count,
+                    supported_file_count = excluded.supported_file_count,
+                    symbol_count = excluded.symbol_count
+                """,
+                (
+                    project,
+                    str(root),
+                    created_at,
+                    indexed_at,
+                    indexed_at,
+                    file_count,
+                    file_count,
+                    symbol_count,
+                ),
+            )
+
+    with _acquire_locks(METADATA_DB):
+        with _connect(METADATA_DB) as conn:
+            _init_metadata_schema(conn)
+            conn.execute(
+                """
+                UPDATE projects
+                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?
+                WHERE name = ?
+                """,
+                (indexed_at, indexed_at, file_count, file_count, symbol_count, project),
+            )
+
+    return {
+        "project": project,
+        "root_path": str(root),
+        "mode": project_data["mode"],
+        "file_count": file_count,
+        "supported_file_count": file_count,
+        "symbol_count": symbol_count,
+        "indexed_at": indexed_at,
+        "changed_file_count": len(upserted_paths),
+        "deleted_file_count": deleted_file_count,
+        "unchanged_file_count": len(unchanged_paths),
+    }
+
+
 def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
     row = conn.execute(
         """
-        SELECT rel_path, abs_path, language, root_type, node_count, has_error, byte_length, skeleton, indexed_at
+        SELECT rel_path, abs_path, language, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
         FROM files
         WHERE id = ?
         """,
@@ -572,6 +735,8 @@ def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
         "node_count": row["node_count"],
         "has_error": bool(row["has_error"]),
         "byte_length": row["byte_length"],
+        "file_size": row["file_size"],
+        "file_mtime_ns": row["file_mtime_ns"],
         "skeleton": row["skeleton"],
         "indexed_at": row["indexed_at"],
     }
@@ -589,7 +754,7 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
 
     with _db_lock(db_path):
         with _connect(db_path) as conn:
-            _init_project_schema(conn)
+            _ensure_project_schema(conn)
             _upsert_file_analysis(
                 conn,
                 project=project,
@@ -597,6 +762,7 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
                 resolved_path=resolved,
                 analysis=analysis,
                 indexed_at=indexed_at,
+                **_project_file_snapshot(resolved),
             )
             file_row = conn.execute("SELECT id FROM files WHERE rel_path = ?", (rel_path,)).fetchone()
             if file_row is None:

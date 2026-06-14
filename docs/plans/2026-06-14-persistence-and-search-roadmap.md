@@ -5,7 +5,7 @@
 **Goal:** Harden project persistence in sqlite, then evolve the server into a cached, incremental, project-scoped code index with optional vector search.
 
 **Architecture:**
-Use sqlite as the source of truth for metadata and per-project structural indexes. Keep DB connections short-lived and write windows small to support concurrent MCP traffic. Add incrementality at the file level first, then introduce background filewatching, caching, and vector search as additive layers rather than replacing the current sqlite index too early.
+Use sqlite as the source of truth for metadata and per-project structural indexes. Keep DB connections short-lived and write windows small to support concurrent MCP traffic. Add incrementality at the file level first with filesystem watching, then introduce caching and vector search as additive layers rather than replacing the current sqlite index too early.
 
 **Tech Stack:**
 - Python 3.11+
@@ -16,96 +16,17 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-## Immediate steps
-
-### Task 1: Add unit test coverage for sqlite persistence and project-scoped indexing
-
-**Objective:** Lock in the current persistence model before building on top of it.
-
-**Files:**
-- Modify: `tests/test_smoke.py`
-- Create: `tests/test_projects_sqlite.py`
-- Modify: `src/agent_code_analyzer/projects.py` only if a test exposes a real bug
-
-**What to cover:**
-- metadata DB is created and contains the project registry row
-- per-project DB is created for a project
-- `add_project(mode="directory")` writes structured file and symbol rows
-- `ingest_project_tree(refresh=False)` reuses cached state instead of reindexing
-- `project_file_summary()` backfills file/symbol rows in the project DB
-- project-scoped calls reject files outside the project root
-- unsupported files fail softly and do not create bad rows
-
-**Verification:**
-- Run: `uv run pytest -q`
-- Expected: all tests pass
-
-**Commit:**
-- `feat: add sqlite persistence coverage`
-
----
-
-### Task 2: Push the current feature branch to remote
-
-**Objective:** Publish the current persistence feature so the branch is backed by remote history before the next iteration.
-
-**Files:**
-- No code changes unless a final fix is required
-
-**Steps:**
-1. Review status: `git status -sb`
-2. Review diff: `git diff --stat`
-3. Commit outstanding changes with a focused message
-4. Push the current branch to origin
-
-**Verification:**
-- Remote branch exists and matches local HEAD
-- `git status -sb` is clean after push
-
-**Commit:**
-- Use the smallest accurate message, for example: `feat: persist project indexes in sqlite`
-
----
-
 ## Milestones
 
-### Milestone 0: Add test mutations
+### Milestone 0: Filesystem watching incremental re-parsing service
 
-**Objective:** Add mutation testing to prove the unit tests catch meaningful behavior changes, not just line coverage.
-
-**Planned shape:**
-- Evaluate `mutatest` for Python first, plus any better-fit alternatives if the toolchain has moved.
-- Decide whether mutation runs should target the full suite or a curated subset first.
-- Establish a minimal mutation gate for critical modules before expanding coverage.
-
-**Decision inputs:**
-- compatibility with Python 3.11+
-- setup overhead in this repo
-- reporting quality and exit codes
-- ability to focus on changed modules or files
-
-**Likely files:**
-- Create: `docs/decisions/mutation-testing.md`
-- Possibly create: `scripts/mutation.sh` or equivalent tooling entrypoint
-- Modify: `pyproject.toml` if we add dependency/dev tooling hooks
-- Add tests or CI wiring under `tests/` or `.github/workflows/`
-
-**Success criteria:**
-- At least one mutation-testing tool is selected and documented.
-- The repo can run a mutation pass in a repeatable way.
-- The result is actionable, not just a vanity score.
-
----
-
-### Milestone 1: Per-project filewatching incremental re-parsing service
-
-**Objective:** Reparse only changed files instead of rebuilding project indexes on every refresh.
+**Objective:** Run a background service that monitors configured projects and automatically refreshes persisted sqlite data when their files change.
 
 **Planned shape:**
-- Add a project watcher service that monitors the project root recursively.
-- Debounce filesystem events.
+- Add a project watcher service that monitors every registered project recursively.
+- Debounce filesystem changes so bursts of edits collapse into a single rescan.
 - Reparse only changed, added, or deleted supported files.
-- Update the per-project sqlite DB incrementally.
+- Update the per-project sqlite DB incrementally and keep metadata in sync.
 - Keep the metadata DB as the registry and summary source.
 
 **Likely files:**
@@ -115,13 +36,14 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Add tests under `tests/`
 
 **Success criteria:**
+- Registered projects are watched automatically without manual refresh calls.
 - Editing one file only updates that file’s index rows.
 - Deletes remove file and symbol rows.
 - Repeated no-op scans do not rewrite the database.
 
 ---
 
-### Milestone 2: Validate sub-file symbols for projects with poor structure hygiene
+### Milestone 1: Validate sub-file symbols for projects with poor structure hygiene
 
 **Objective:** Detect when a project’s file structure is too messy for reliable symbol extraction.
 
@@ -148,7 +70,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 3: Add caching
+### Milestone 2: Add caching
 
 **Objective:** Reduce repeated parse cost for hot files and repeated requests.
 
@@ -169,7 +91,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 4: Select a vector database
+### Milestone 3: Select a vector database
 
 **Objective:** Choose the best vector store for semantic code search.
 
@@ -195,7 +117,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 5: Project-scoped code ingestion in the vector database
+### Milestone 4: Project-scoped code ingestion in the vector database
 
 **Objective:** Enable semantic retrieval over project code, not just structural lookup.
 
@@ -218,7 +140,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 6: Decide whether vector DB supplements or replaces some sqlite responsibilities
+### Milestone 5: Decide whether vector DB supplements or replaces some sqlite responsibilities
 
 **Objective:** Avoid unnecessary duplication and keep the system maintainable.
 
@@ -242,20 +164,20 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 7: Add coverage tooling and regression safety nets
+### Milestone 6: Add coverage tooling and regression safety nets
 
-**Objective:** Make coverage, mutation testing, and regression safety visible and repeatable.
+**Objective:** Make unit coverage and regression checks visible and repeatable before the more environment-sensitive work.
 
 **Planned shape:**
 - Add coverage reporting to the normal test workflow.
-- Choose a regression safety-net mechanism for code changes that complements unit tests.
+- Keep a documented command for running the full unit suite.
+- Add a regression safety-net mechanism that complements unit tests.
 - Make the tooling easy to run locally and in CI.
 
 **Possible tools:**
 - Python coverage / pytest-cov
-- mutation testing: `mutatest` or equivalent
-- PHP: Infection if any PHP components are added later
-- JVM: PIT if any JVM components are added later
+- golden-file or snapshot-style checks where they fit
+- additional smoke tests for server behavior
 
 **Likely files:**
 - Modify: `pyproject.toml`
@@ -270,7 +192,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 8: Add code quality analysis
+### Milestone 7: Add code quality analysis
 
 **Objective:** Enforce maintainable code shape and style automatically.
 
@@ -298,7 +220,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 9: Add code security analysis
+### Milestone 8: Add code security analysis
 
 **Objective:** Add automated security checks and agent workflows for unsafe code detection.
 
@@ -325,20 +247,50 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
+### Milestone 9: Add mutation testing at the end
+
+**Objective:** Prove the unit tests catch meaningful behavior changes once the project structure, build boundaries, and environment assumptions are stable.
+
+**Why it is last:**
+Mutation testing is the most environment-sensitive milestone here. It depends on stable packaging, reliable test isolation, and a clear answer to which environments are authoritative. That makes it a better fit after the filesystem watcher, caching, coverage, and quality gates are settled.
+
+**Planned shape:**
+- Evaluate `mutatest` for Python first, plus any better-fit alternatives if the toolchain has moved.
+- Decide whether mutation runs should target the full suite or a curated subset first.
+- Establish a minimal mutation gate for critical modules before expanding coverage.
+
+**Decision inputs:**
+- compatibility with Python 3.11+
+- setup overhead in this repo
+- reporting quality and exit codes
+- ability to focus on changed modules or files
+- behavior across local dev, CI, and project-specific environments
+
+**Likely files:**
+- Create: `docs/decisions/mutation-testing.md`
+- Possibly create: `scripts/mutation.sh` or equivalent tooling entrypoint
+- Modify: `pyproject.toml` if we add dependency/dev tooling hooks
+- Add tests or CI wiring under `tests/` or `.github/workflows/`
+
+**Success criteria:**
+- At least one mutation-testing tool is selected and documented.
+- The repo can run a mutation pass in a repeatable way.
+- The result is actionable, not just a vanity score.
+
+---
+
 ## Recommended implementation order
 
-1. Add test mutations
-2. Add unit test coverage
-3. Push the current feature branch to remote
-4. Implement incremental filewatching
-5. Add structure-health validation
-6. Add caching
-7. Evaluate and select a vector DB
-8. Build project-scoped vector ingestion/search
-9. Revisit sqlite vs vector ownership
-10. Add coverage tooling and regression safety nets
-11. Add code quality analysis
-12. Add code security analysis
+1. Implement filesystem watching incremental re-parsing
+2. Validate sub-file symbols
+3. Add caching
+4. Select a vector DB
+5. Build project-scoped vector ingestion/search
+6. Revisit sqlite vs vector ownership
+7. Add coverage tooling and regression safety nets
+8. Add code quality analysis
+9. Add code security analysis
+10. Add mutation testing
 
 ---
 
