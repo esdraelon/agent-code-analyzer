@@ -44,6 +44,8 @@ TARGET_NODE_TYPES = {
     "struct_declaration",
 }
 
+DEFAULT_MAX_SYMBOL_DEPTH = 6
+
 
 @dataclass(frozen=True)
 class ParsedFile:
@@ -134,6 +136,56 @@ def _walk_tree(tree: Any) -> Iterator[tuple[Any, int]]:
                 break
 
 
+def _symbol_health_report(
+    symbols: list[dict[str, object]],
+    *,
+    has_error: bool,
+    max_depth: int = DEFAULT_MAX_SYMBOL_DEPTH,
+) -> dict[str, Any]:
+    issues: list[str] = []
+    seen_issues: set[str] = set()
+    seen_names: set[tuple[str, int, str]] = set()
+
+    def add_issue(message: str) -> None:
+        if message in seen_issues:
+            return
+        seen_issues.add(message)
+        issues.append(message)
+
+    if has_error:
+        add_issue("parse tree contains error nodes")
+
+    for index, symbol in enumerate(symbols):
+        name = str(symbol.get("name", "")).strip()
+        symbol_type = str(symbol.get("type", "")).strip() or "symbol"
+        depth_value = symbol.get("depth", 0)
+        depth = int(depth_value) if isinstance(depth_value, (int, str)) else 0
+
+        if not name:
+            add_issue(f"symbol #{index} is missing a name")
+            continue
+
+        if depth > max_depth:
+            add_issue(
+                f"symbol '{name}' at depth {depth} exceeds max depth {max_depth}"
+            )
+
+        scope_key = (symbol_type, depth, name)
+        if scope_key in seen_names:
+            add_issue(
+                f"duplicate symbol name '{name}' in scope type={symbol_type} depth={depth}"
+            )
+            continue
+        seen_names.add(scope_key)
+
+    return {
+        "healthy": not issues,
+        "issues": issues,
+        "max_depth": max_depth,
+        "symbol_count": len(symbols),
+    }
+
+
 def analyze_file(file_path: str) -> dict[str, Any]:
     if not detect_language(file_path):
         raise ValueError(f"Unsupported file extension for Tree-sitter: {file_path}")
@@ -168,6 +220,10 @@ def analyze_file(file_path: str) -> dict[str, Any]:
         "parsed": parsed,
         "skeleton": "\n".join(skeleton_lines),
         "symbols": symbols,
+        "symbol_health": _symbol_health_report(
+            symbols,
+            has_error=bool(parsed.tree.root_node.has_error),
+        ),
     }
 
 
