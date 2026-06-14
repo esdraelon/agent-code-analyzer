@@ -24,9 +24,11 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 **Objective:** Run a background service that monitors configured projects and automatically refreshes persisted sqlite data when their files change.
 
-**Planned shape:**
+**Implemented shape:**
 - Add a project watcher service that monitors every registered project recursively.
-- Debounce filesystem changes so bursts of edits collapse into a single rescan.
+- Route filesystem events into a **project-level dirty queue** instead of syncing on every event.
+- Deduplicate dirty-project messages by project name and reset the debounce deadline on each burst.
+- Run a periodic safety sweep every 10 seconds, but only flush projects whose debounce deadline has actually matured.
 - Reparse only changed, added, or deleted supported files.
 - Update the per-project sqlite DB incrementally and keep metadata in sync.
 - Keep the metadata DB as the registry and summary source.
@@ -42,6 +44,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Editing one file only updates that file’s index rows.
 - Deletes remove file and symbol rows.
 - Repeated no-op scans do not rewrite the database.
+- Bursts of save events collapse into a single project sync.
 
 ---
 

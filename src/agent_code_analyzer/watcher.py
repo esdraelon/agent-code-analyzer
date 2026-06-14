@@ -7,30 +7,91 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from .projects import list_projects, sync_project_tree
+
+
+@dataclass
+class DirtyProjectQueue:
+    """Deduplicated project-level dirty queue with debounce deadlines."""
+
+    debounce_seconds: float = 1.0
+    _dirty_until: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def mark_dirty(self, project: str, now: float | None = None) -> None:
+        current = self._now(now)
+        with self._lock:
+            self._dirty_until[project] = current + self.debounce_seconds
+
+    def mark_many_dirty(self, projects: Iterable[str], now: float | None = None) -> None:
+        current = self._now(now)
+        with self._lock:
+            due_at = current + self.debounce_seconds
+            for project in projects:
+                self._dirty_until[project] = due_at
+
+    def pending_projects(self) -> list[str]:
+        with self._lock:
+            return sorted(self._dirty_until)
+
+    def pop_ready(self, now: float | None = None) -> list[str]:
+        current = self._now(now)
+        with self._lock:
+            ready = sorted(project for project, due_at in self._dirty_until.items() if due_at <= current)
+            for project in ready:
+                self._dirty_until.pop(project, None)
+            return ready
+
+    def next_ready_at(self) -> float | None:
+        with self._lock:
+            if not self._dirty_until:
+                return None
+            return min(self._dirty_until.values())
+
+    def has_pending(self) -> bool:
+        with self._lock:
+            return bool(self._dirty_until)
+
+    @staticmethod
+    def _now(now: float | None) -> float:
+        return time.monotonic() if now is None else now
 
 
 @dataclass
 class ProjectWatcherService:
     """Background fswatch-driven watcher that keeps configured projects in sync."""
 
-    poll_interval: float = 2.0
+    debounce_seconds: float = 1.0
+    safety_sweep_interval: float = 10.0
+    poll_interval: float = 0.05
     fswatch_command: str = "fswatch"
+    project_provider: Callable[[], list[dict[str, Any]]] = list_projects
+    sync_callback: Callable[[str], dict[str, Any]] = sync_project_tree
+    clock: Callable[[], float] = time.monotonic
+    sleeper: Callable[[float], None] = time.sleep
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
-    _thread: threading.Thread | None = field(default=None, init=False, repr=False)
+    _watch_thread: threading.Thread | None = field(default=None, init=False, repr=False)
+    _sweep_thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _process: subprocess.Popen[str] | None = field(default=None, init=False, repr=False)
     _last_results: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
+    _last_sweep_at: float = field(default=0.0, init=False, repr=False)
+    _dirty_queue: DirtyProjectQueue = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._dirty_queue = DirtyProjectQueue(debounce_seconds=self.debounce_seconds)
 
     def start(self) -> "ProjectWatcherService":
-        if self._thread is not None and self._thread.is_alive():
+        if self._watch_thread is not None and self._watch_thread.is_alive():
             return self
         self._ensure_fswatch_available()
         self._stop_event.clear()
         self.scan_once()
-        self._thread = threading.Thread(target=self._run, name="agent-code-analyzer-fswatch", daemon=True)
-        self._thread.start()
+        self._watch_thread = threading.Thread(target=self._watch_loop, name="agent-code-analyzer-fswatch", daemon=True)
+        self._sweep_thread = threading.Thread(target=self._sweep_loop, name="agent-code-analyzer-sweep", daemon=True)
+        self._watch_thread.start()
+        self._sweep_thread.start()
         return self
 
     def stop(self) -> None:
@@ -38,10 +99,11 @@ class ProjectWatcherService:
         process = self._process
         if process is not None:
             self._terminate_process(process)
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=5.0)
-        self._thread = None
+        for thread in (self._watch_thread, self._sweep_thread):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=5.0)
+        self._watch_thread = None
+        self._sweep_thread = None
         self._process = None
 
     def close(self) -> None:
@@ -55,10 +117,10 @@ class ProjectWatcherService:
 
     def scan_once(self) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        for project in list_projects():
+        for project in self.project_provider():
             name = project["name"]
             try:
-                result = sync_project_tree(name)
+                result = self.sync_callback(name)
             except Exception as exc:  # pragma: no cover - defensive runtime guard
                 results.append({"project": name, "error": str(exc)})
                 continue
@@ -67,6 +129,53 @@ class ProjectWatcherService:
                 results.append(result)
         self._last_results = results
         return results
+
+    def enqueue_project(self, project_name: str, now: float | None = None) -> None:
+        self._dirty_queue.mark_dirty(project_name, now=now)
+
+    def enqueue_projects(self, project_names: Iterable[str], now: float | None = None) -> None:
+        self._dirty_queue.mark_many_dirty(project_names, now=now)
+
+    def observe_event(
+        self,
+        event_path: str,
+        projects: list[dict[str, Any]] | None = None,
+        now: float | None = None,
+    ) -> list[str]:
+        active_projects = projects if projects is not None else self.project_provider()
+        matched = self._project_for_path(active_projects, event_path)
+        if matched is None:
+            project_names = [project["name"] for project in active_projects]
+        else:
+            project_names = [matched["name"]]
+        self.enqueue_projects(project_names, now=now)
+        return project_names
+
+    def flush_ready_projects(self, now: float | None = None) -> list[dict[str, Any]]:
+        ready_projects = self._dirty_queue.pop_ready(now=now)
+        results: list[dict[str, Any]] = []
+        for project_name in ready_projects:
+            try:
+                result = self.sync_callback(project_name)
+            except Exception as exc:  # pragma: no cover - defensive runtime guard
+                result = {"project": project_name, "error": str(exc)}
+            else:
+                self._record_result(result)
+            results.append(result)
+        return results
+
+    def run_safety_sweep(self, now: float | None = None) -> list[dict[str, Any]]:
+        current = self.clock() if now is None else now
+        if current - self._last_sweep_at < self.safety_sweep_interval:
+            return []
+
+        if not self._dirty_queue.has_pending():
+            return []
+
+        ready = self.flush_ready_projects(now=current)
+        if ready:
+            self._last_sweep_at = current
+        return ready
 
     @property
     def last_results(self) -> list[dict[str, Any]]:
@@ -110,11 +219,8 @@ class ProjectWatcherService:
         if result.get("changed_file_count") or result.get("deleted_file_count"):
             self._last_results.append(result)
 
-    def _sync_project(self, project_name: str) -> None:
-        result = sync_project_tree(project_name)
-        self._record_result(result)
-
-    def _run_once(self, projects: list[dict[str, Any]]) -> None:
+    def _watch_loop(self) -> None:
+        projects = self.project_provider()
         if not projects:
             return
 
@@ -137,21 +243,23 @@ class ProjectWatcherService:
                     event_path = line.strip()
                     if not event_path:
                         continue
-                    matched = self._project_for_path(projects, event_path)
-                    if matched is None:
-                        for project in projects:
-                            self._sync_project(project["name"])
-                    else:
-                        self._sync_project(matched["name"])
+                    self.observe_event(event_path, projects=projects, now=self.clock())
                     continue
 
                 if process.poll() is not None:
                     break
 
-                time.sleep(0.05)
+                self.sleeper(self.poll_interval)
         finally:
             self._terminate_process(process)
             self._process = None
+
+    def _sweep_loop(self) -> None:
+        while not self._stop_event.is_set():
+            self._stop_event.wait(self.safety_sweep_interval)
+            if self._stop_event.is_set():
+                break
+            self.run_safety_sweep(now=self.clock())
 
     def _terminate_process(self, process: subprocess.Popen[str]) -> None:
         if process.poll() is not None:
@@ -165,13 +273,3 @@ class ProjectWatcherService:
                 process.wait(timeout=2.0)
             except Exception:
                 pass
-
-    def _run(self) -> None:
-        while not self._stop_event.is_set():
-            projects = list_projects()
-            if not projects:
-                self._stop_event.wait(self.poll_interval)
-                continue
-            self._run_once(projects)
-            if not self._stop_event.is_set():
-                self._stop_event.wait(self.poll_interval)
