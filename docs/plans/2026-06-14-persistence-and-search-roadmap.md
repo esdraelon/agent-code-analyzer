@@ -69,6 +69,34 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ## Milestones
 
+### Milestone 0: Add test mutations
+
+**Objective:** Add mutation testing to prove the unit tests catch meaningful behavior changes, not just line coverage.
+
+**Planned shape:**
+- Evaluate `mutatest` for Python first, plus any better-fit alternatives if the toolchain has moved.
+- Decide whether mutation runs should target the full suite or a curated subset first.
+- Establish a minimal mutation gate for critical modules before expanding coverage.
+
+**Decision inputs:**
+- compatibility with Python 3.11+
+- setup overhead in this repo
+- reporting quality and exit codes
+- ability to focus on changed modules or files
+
+**Likely files:**
+- Create: `docs/decisions/mutation-testing.md`
+- Possibly create: `scripts/mutation.sh` or equivalent tooling entrypoint
+- Modify: `pyproject.toml` if we add dependency/dev tooling hooks
+- Add tests or CI wiring under `tests/` or `.github/workflows/`
+
+**Success criteria:**
+- At least one mutation-testing tool is selected and documented.
+- The repo can run a mutation pass in a repeatable way.
+- The result is actionable, not just a vanity score.
+
+---
+
 ### Milestone 1: Per-project filewatching incremental re-parsing service
 
 **Objective:** Reparse only changed files instead of rebuilding project indexes on every refresh.
@@ -214,16 +242,103 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
+### Milestone 7: Add coverage tooling and regression safety nets
+
+**Objective:** Make coverage, mutation testing, and regression safety visible and repeatable.
+
+**Planned shape:**
+- Add coverage reporting to the normal test workflow.
+- Choose a regression safety-net mechanism for code changes that complements unit tests.
+- Make the tooling easy to run locally and in CI.
+
+**Possible tools:**
+- Python coverage / pytest-cov
+- mutation testing: `mutatest` or equivalent
+- PHP: Infection if any PHP components are added later
+- JVM: PIT if any JVM components are added later
+
+**Likely files:**
+- Modify: `pyproject.toml`
+- Create: `docs/decisions/test-safety-nets.md`
+- Possibly create: `scripts/test-coverage.sh`
+- Possibly modify CI config
+
+**Success criteria:**
+- Coverage can be measured with a single documented command.
+- Regression checks are part of the normal workflow, not ad hoc.
+- The chosen safety-net tools produce deterministic signals.
+
+---
+
+### Milestone 8: Add code quality analysis
+
+**Objective:** Enforce maintainable code shape and style automatically.
+
+**Planned shape:**
+- Add linting and style enforcement.
+- Add method/function complexity analysis.
+- Add static checks for code structure, naming, and pattern misuse where practical.
+- Capture useful analysis in CI and developer commands.
+
+**Possible tools:**
+- Ruff / Black / pytest-based quality checks
+- complexity analysis tools such as radon or similar
+- design-pattern or architecture checks where they fit the repo
+- agent skills for code review and quality triage
+
+**Likely files:**
+- Modify: `pyproject.toml`
+- Create: `docs/decisions/code-quality.md`
+- Possibly create: `.github/workflows/quality.yml`
+
+**Success criteria:**
+- Linting and style rules run automatically.
+- Complexity hotspots are visible.
+- Quality regressions are caught early.
+
+---
+
+### Milestone 9: Add code security analysis
+
+**Objective:** Add automated security checks and agent workflows for unsafe code detection.
+
+**Planned shape:**
+- Add dependency and source-code security scanning.
+- Add secret detection and risky-pattern analysis where appropriate.
+- Define security review skills and automation for recurring checks.
+
+**Possible tools:**
+- `pip-audit` or equivalent dependency auditing
+- `bandit` or similar Python security scanner
+- secret scanning tools where relevant
+- agent skills for security review and triage
+
+**Likely files:**
+- Modify: `pyproject.toml`
+- Create: `docs/decisions/code-security.md`
+- Possibly create: `.github/workflows/security.yml`
+
+**Success criteria:**
+- Security scans run automatically.
+- Findings are actionable and documented.
+- Unsafe patterns are flagged before merge.
+
+---
+
 ## Recommended implementation order
 
-1. Add unit test coverage
-2. Push the current feature branch to remote
-3. Implement incremental filewatching
-4. Add structure-health validation
-5. Add caching
-6. Evaluate and select a vector DB
-7. Build project-scoped vector ingestion/search
-8. Revisit sqlite vs vector ownership
+1. Add test mutations
+2. Add unit test coverage
+3. Push the current feature branch to remote
+4. Implement incremental filewatching
+5. Add structure-health validation
+6. Add caching
+7. Evaluate and select a vector DB
+8. Build project-scoped vector ingestion/search
+9. Revisit sqlite vs vector ownership
+10. Add coverage tooling and regression safety nets
+11. Add code quality analysis
+12. Add code security analysis
 
 ---
 
