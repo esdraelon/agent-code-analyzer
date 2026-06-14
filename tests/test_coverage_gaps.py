@@ -88,6 +88,16 @@ def test_parsing_error_paths_and_symbol_name_fallback(tmp_path: Path) -> None:
     assert _node_name(_DummyNodeWithIdentifier("hello")) == "hello"
 
 
+def test_parse_file_handles_non_utf8_source_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "legacy.php"
+    source.write_bytes(b"<?php\nfunction hi() { /* \xb0 */ return 1; }\n")
+
+    parsed = parse_file(str(source))
+
+    assert parsed.language == "php"
+    assert "°" in parsed.source_code
+
+
 def test_project_registry_error_paths_and_missing_file_resolution(tmp_path: Path, monkeypatch) -> None:
     projects = _isolate_project_state(tmp_path, monkeypatch)
 

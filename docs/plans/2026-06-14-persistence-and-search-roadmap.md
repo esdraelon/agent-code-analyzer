@@ -20,6 +20,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 0: Filesystem watching incremental re-parsing service
 
+**Status:** complete
+
 **Objective:** Run a background service that monitors configured projects and automatically refreshes persisted sqlite data when their files change.
 
 **Planned shape:**
@@ -44,6 +46,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 ---
 
 ### Milestone 1: Validate sub-file symbols for projects with poor structure hygiene
+
+**Status:** planned
 
 **Objective:** Detect when a project’s file structure is too messy for reliable symbol extraction.
 
@@ -72,6 +76,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 2: Add caching
 
+**Status:** planned
+
 **Objective:** Reduce repeated parse cost for hot files and repeated requests.
 
 **Planned shape:**
@@ -92,6 +98,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 ---
 
 ### Milestone 3: Select a vector database
+
+**Status:** planned
 
 **Objective:** Choose the best vector store for semantic code search.
 
@@ -119,6 +127,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 4: Project-scoped code ingestion in the vector database
 
+**Status:** planned
+
 **Objective:** Enable semantic retrieval over project code, not just structural lookup.
 
 **Planned shape:**
@@ -141,6 +151,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 ---
 
 ### Milestone 5: Decide whether vector DB supplements or replaces some sqlite responsibilities
+
+**Status:** planned
 
 **Objective:** Avoid unnecessary duplication and keep the system maintainable.
 
@@ -165,6 +177,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 ---
 
 ### Milestone 6: Add coverage tooling and regression safety nets
+
+**Status:** planned
 
 **Objective:** Make unit coverage and regression checks visible and repeatable before the more environment-sensitive work.
 
@@ -194,6 +208,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 7: Add code quality analysis
 
+**Status:** planned
+
 **Objective:** Enforce maintainable code shape and style automatically.
 
 **Planned shape:**
@@ -222,6 +238,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 8: Add code security analysis
 
+**Status:** planned
+
 **Objective:** Add automated security checks and agent workflows for unsafe code detection.
 
 **Planned shape:**
@@ -248,6 +266,8 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 ---
 
 ### Milestone 9: Add mutation testing at the end
+
+**Status:** planned
 
 **Objective:** Prove the unit tests catch meaningful behavior changes once the project structure, build boundaries, and environment assumptions are stable.
 
