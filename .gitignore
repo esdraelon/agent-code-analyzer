@@ -172,6 +172,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# Hermes local planning/work files
+.hermes/
+
 # Pyre type checker
 .pyre/
 
