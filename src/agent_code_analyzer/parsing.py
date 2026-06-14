@@ -118,31 +118,19 @@ def _walk_tree(tree: Any) -> Iterator[tuple[Any, int]]:
                 break
 
 
-def ast_skeleton(file_path: str) -> str:
+def analyze_file(file_path: str) -> dict[str, Any]:
     if not detect_language(file_path):
-        return ""
+        raise ValueError(f"Unsupported file extension for Tree-sitter: {file_path}")
 
     parsed = parse_file(file_path)
-    lines: list[str] = []
-
-    for node, depth in _walk_tree(parsed.tree):
-        if node.type in TARGET_NODE_TYPES:
-            indent = "  " * depth
-            lines.append(f"{indent}[{node.type}] {_node_signature(node, parsed.source_code)}")
-
-    return "\n".join(lines)
-
-
-def list_symbols(file_path: str) -> list[dict[str, object]]:
-    if not detect_language(file_path):
-        return []
-
-    parsed = parse_file(file_path)
+    skeleton_lines: list[str] = []
     symbols: list[dict[str, object]] = []
 
     for node, depth in _walk_tree(parsed.tree):
         if node.type not in TARGET_NODE_TYPES:
             continue
+        signature = _node_signature(node, parsed.source_code)
+        skeleton_lines.append(f"{'  ' * depth}[{node.type}] {signature}")
         symbols.append(
             {
                 "type": node.type,
@@ -156,8 +144,24 @@ def list_symbols(file_path: str) -> list[dict[str, object]]:
                     "row": node.end_point[0],
                     "column": node.end_point[1],
                 },
-                "signature": _node_signature(node, parsed.source_code),
+                "signature": signature,
             }
         )
 
-    return symbols
+    return {
+        "parsed": parsed,
+        "skeleton": "\n".join(skeleton_lines),
+        "symbols": symbols,
+    }
+
+
+def ast_skeleton(file_path: str) -> str:
+    if not detect_language(file_path):
+        return ""
+    return analyze_file(file_path)["skeleton"]
+
+
+def list_symbols(file_path: str) -> list[dict[str, object]]:
+    if not detect_language(file_path):
+        return []
+    return analyze_file(file_path)["symbols"]

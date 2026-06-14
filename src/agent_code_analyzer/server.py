@@ -1,71 +1,110 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from .parsing import ast_skeleton, detect_language, list_symbols, parse_file
+from .projects import (
+    add_project as add_project_record,
+    get_project,
+    ingest_project_tree as ingest_project_index,
+    list_projects as list_project_records,
+    project_file_summary,
+    resolve_project_path,
+    search_projects as search_project_records,
+)
 
 mcp = FastMCP(
     name="agent-code-analyzer",
-    instructions="Parse source files with Tree-sitter and return structural summaries.",
+    instructions=(
+        "Parse source files with Tree-sitter and return structural summaries. "
+        "All code-analysis calls are project-scoped."
+    ),
 )
 
 
 @mcp.tool()
-def parse_source(file_path: str) -> dict[str, object]:
-    """Parse a source file and return basic metadata about the syntax tree."""
+def add_project(
+    project: str,
+    root_path: str,
+    mode: str = "file",
+    description: str = "",
+) -> dict[str, object]:
+    """Register a project namespace and optionally ingest a directory tree."""
+    return add_project_record(project, root_path=root_path, mode=mode, description=description)
+
+
+@mcp.tool()
+def list_projects() -> list[dict[str, object]]:
+    """List all registered projects."""
+    return list_project_records()
+
+
+@mcp.tool()
+def search_projects(query: str) -> list[dict[str, object]]:
+    """Search registered projects by name, root path, mode, or description."""
+    return search_project_records(query)
+
+
+@mcp.tool()
+def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, object]:
+    """Recursively ingest a project's directory into a cached Tree-sitter index."""
+    get_project(project)
+    return ingest_project_index(project, refresh=refresh)
+
+
+@mcp.tool()
+def parse_source(project: str, file_path: str) -> dict[str, object]:
+    """Parse a source file within a project and return basic tree metadata."""
     try:
-        parsed = parse_file(file_path)
+        return project_file_summary(project, file_path)
     except ValueError as exc:
         return {
+            "project": project,
             "file_path": file_path,
             "supported": False,
             "language": "",
             "error": str(exc),
         }
 
-    root = parsed.tree.root_node
-    return {
-        "file_path": parsed.file_path,
-        "supported": True,
-        "language": parsed.language,
-        "root_type": root.type,
-        "node_count": root.descendant_count,
-        "has_error": root.has_error,
-        "byte_length": len(parsed.source_code.encode("utf-8")),
-    }
-
 
 @mcp.tool()
-def generate_ast_skeleton(file_path: str) -> str:
-    """Return a compact structural outline of top-level declarations in a file."""
+def generate_ast_skeleton(project: str, file_path: str) -> str:
+    """Return a compact structural outline of a file inside a project."""
     try:
-        return ast_skeleton(file_path)
+        return project_file_summary(project, file_path)["skeleton"]
     except ValueError:
         return ""
 
 
 @mcp.tool()
-def list_code_symbols(file_path: str) -> str:
+def list_code_symbols(project: str, file_path: str) -> str:
     """Return a JSON string containing extracted structural symbols."""
     try:
-        return json.dumps(list_symbols(file_path), indent=2, ensure_ascii=False)
+        symbols = project_file_summary(project, file_path)["symbols"]
+        return json.dumps(symbols, indent=2, ensure_ascii=False)
     except ValueError:
         return "[]"
 
 
 @mcp.tool()
-def detect_source_language(file_path: str) -> str:
+def detect_source_language(project: str, file_path: str) -> str:
     """Return the Tree-sitter language name inferred from a file path."""
-    return detect_language(file_path)
+    try:
+        return project_file_summary(project, file_path)["language"]
+    except ValueError:
+        return ""
 
 
 @mcp.tool()
-def read_file_excerpt(file_path: str, start_line: int = 1, end_line: int = 200) -> str:
-    """Read a bounded line range from a file for debugging and review."""
-    path = Path(file_path)
+def read_file_excerpt(
+    project: str,
+    file_path: str,
+    start_line: int = 1,
+    end_line: int = 200,
+) -> str:
+    """Read a bounded line range from a project file for debugging and review."""
+    path = resolve_project_path(project, file_path)
     lines = path.read_text(encoding="utf-8").splitlines()
     if start_line < 1:
         start_line = 1
