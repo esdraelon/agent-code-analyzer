@@ -207,6 +207,10 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Regression checks are part of the normal workflow, not ad hoc.
 - The chosen safety-net tools produce deterministic signals.
 
+**Validation note:**
+- `pytest-cov` is now installed in the dev environment.
+- Current measured coverage: 97% overall; `watcher.py` is at 91%.
+
 ---
 
 ### Milestone 7: Add code quality analysis
