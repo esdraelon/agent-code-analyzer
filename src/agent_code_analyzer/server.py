@@ -13,6 +13,7 @@ from .projects import (
     resolve_project_path,
     search_projects as search_project_records,
 )
+from .watcher import ProjectWatcherService
 
 mcp = FastMCP(
     name="agent-code-analyzer",
@@ -117,7 +118,11 @@ def read_file_excerpt(
 
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    watcher = ProjectWatcherService().start()
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        watcher.stop()
 
 
 if __name__ == "__main__":

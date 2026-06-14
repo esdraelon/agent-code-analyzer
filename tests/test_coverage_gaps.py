@@ -193,8 +193,11 @@ def test_server_wrappers_and_file_excerpt_cover_tool_paths(tmp_path: Path, monke
     assert search_projects("gamma")[0]["name"] == "gamma"
     assert get_project("gamma")["name"] == "gamma"
 
+    import agent_code_analyzer.watcher as watcher
     import mcp.server.fastmcp as fastmcp
 
+    monkeypatch.setattr(watcher.ProjectWatcherService, "start", lambda self: self)
+    monkeypatch.setattr(watcher.ProjectWatcherService, "stop", lambda self: None)
     monkeypatch.setattr(fastmcp.FastMCP, "run", lambda self, transport="stdio": None)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
