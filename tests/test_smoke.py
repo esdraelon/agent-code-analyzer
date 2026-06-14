@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from agent_code_analyzer import __version__
@@ -18,8 +19,8 @@ def test_project_registration_and_directory_ingest(tmp_path: Path, monkeypatch) 
 
     state_dir = tmp_path / "state"
     monkeypatch.setattr(projects, "DATA_DIR", state_dir)
-    monkeypatch.setattr(projects, "REGISTRY_FILE", state_dir / "projects.json")
-    monkeypatch.setattr(projects, "INDEX_DIR", state_dir / "indexes")
+    monkeypatch.setattr(projects, "METADATA_DB", state_dir / "metadata.sqlite3")
+    monkeypatch.setattr(projects, "PROJECTS_DIR", state_dir / "projects")
 
     root = tmp_path / "alpha"
     (root / "src").mkdir(parents=True)
@@ -51,6 +52,24 @@ export function add(a: number, b: number) {
     assert added["ingest"]["file_count"] == 2
     assert added["ingest"]["symbol_count"] >= 2
 
+    project_db = Path(added["db_path"])
+    assert projects.METADATA_DB.exists()
+    assert project_db.exists()
+
+    with sqlite3.connect(projects.METADATA_DB) as conn:
+        row = conn.execute("SELECT name, root_path, db_path FROM projects WHERE name = ?", ("alpha",)).fetchone()
+        assert row == ("alpha", str(root.resolve()), str(project_db))
+
+    with sqlite3.connect(project_db) as conn:
+        file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        assert file_count == 2
+        assert symbol_count >= 2
+        stored = conn.execute("SELECT rel_path, language, skeleton FROM files ORDER BY rel_path ASC").fetchone()
+        assert stored[0] == "src/one.py"
+        assert stored[1] == "python"
+        assert "Greeter" in stored[2]
+
     projects_list = list_projects()
     assert len(projects_list) == 1
     assert projects_list[0]["name"] == "alpha"
@@ -78,8 +97,8 @@ def test_file_level_tools_respect_project_scope(tmp_path: Path, monkeypatch) -> 
 
     state_dir = tmp_path / "state"
     monkeypatch.setattr(projects, "DATA_DIR", state_dir)
-    monkeypatch.setattr(projects, "REGISTRY_FILE", state_dir / "projects.json")
-    monkeypatch.setattr(projects, "INDEX_DIR", state_dir / "indexes")
+    monkeypatch.setattr(projects, "METADATA_DB", state_dir / "metadata.sqlite3")
+    monkeypatch.setattr(projects, "PROJECTS_DIR", state_dir / "projects")
 
     root = tmp_path / "beta"
     root.mkdir()

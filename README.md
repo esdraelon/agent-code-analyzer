@@ -9,6 +9,8 @@ This server now treats *projects* as the primary unit of work.
 - register a project with a root directory
 - every analysis call must include the project name
 - optionally ingest a whole project tree recursively for fast project-level analysis
+- persistence is backed by sqlite: one metadata database plus one database per project
+- tree-sitter output is stored structurally in the per-project database
 
 ## MCP tools
 

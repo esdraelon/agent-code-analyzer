@@ -4,7 +4,6 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from .parsing import ast_skeleton, detect_language, list_symbols
 from .projects import (
     add_project as add_project_record,
     get_project,
@@ -73,8 +72,7 @@ def parse_source(project: str, file_path: str) -> dict[str, object]:
 def generate_ast_skeleton(project: str, file_path: str) -> str:
     """Return a compact structural outline of a file inside a project."""
     try:
-        resolved = resolve_project_path(project, file_path)
-        return ast_skeleton(str(resolved))
+        return project_file_summary(project, file_path)["skeleton"]
     except ValueError:
         return ""
 
@@ -83,8 +81,8 @@ def generate_ast_skeleton(project: str, file_path: str) -> str:
 def list_code_symbols(project: str, file_path: str) -> str:
     """Return a JSON string containing extracted structural symbols."""
     try:
-        resolved = resolve_project_path(project, file_path)
-        return json.dumps(list_symbols(str(resolved)), indent=2, ensure_ascii=False)
+        symbols = project_file_summary(project, file_path)["symbols"]
+        return json.dumps(symbols, indent=2, ensure_ascii=False)
     except ValueError:
         return "[]"
 
@@ -93,8 +91,7 @@ def list_code_symbols(project: str, file_path: str) -> str:
 def detect_source_language(project: str, file_path: str) -> str:
     """Return the Tree-sitter language name inferred from a file path."""
     try:
-        resolved = resolve_project_path(project, file_path)
-        return detect_language(str(resolved))
+        return project_file_summary(project, file_path)["language"]
     except ValueError:
         return ""
 

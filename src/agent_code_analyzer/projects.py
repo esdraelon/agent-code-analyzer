@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 import re
+import sqlite3
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .parsing import analyze_file, detect_language
 
 DATA_DIR = Path(os.environ.get("AGENT_CODE_ANALYZER_HOME", Path.home() / ".agent-code-analyzer"))
-REGISTRY_FILE = DATA_DIR / "projects.json"
-INDEX_DIR = DATA_DIR / "indexes"
+METADATA_DB = DATA_DIR / "metadata.sqlite3"
+PROJECTS_DIR = DATA_DIR / "projects"
 IGNORED_DIRS = {
     ".git",
     ".mypy_cache",
@@ -25,11 +29,15 @@ IGNORED_DIRS = {
     "__pycache__",
 }
 
+_LOCKS: dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
 
 @dataclass(frozen=True)
 class ProjectRecord:
     name: str
     root_path: str
+    db_path: str
     mode: str
     description: str
     created_at: str
@@ -38,7 +46,6 @@ class ProjectRecord:
     file_count: int = 0
     supported_file_count: int = 0
     symbol_count: int = 0
-    index_path: str | None = None
 
 
 def _now() -> str:
@@ -47,7 +54,7 @@ def _now() -> str:
 
 def _ensure_storage() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _slugify(value: str) -> str:
@@ -56,62 +63,291 @@ def _slugify(value: str) -> str:
     return slug or "project"
 
 
-def _load_registry() -> dict[str, dict[str, Any]]:
-    _ensure_storage()
-    if not REGISTRY_FILE.exists():
-        return {}
+def _project_db_path(name: str) -> Path:
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+    return PROJECTS_DIR / f"{_slugify(name)}-{digest}" / "project.sqlite3"
+
+def _db_lock(path: Path) -> threading.RLock:
+    key = str(path.resolve())
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def _acquire_locks(*paths: Path) -> Iterator[None]:
+    unique = sorted({str(path.resolve()): path.resolve() for path in paths}.values(), key=str)
+    locks = [_db_lock(path) for path in unique]
+    for lock in locks:
+        lock.acquire()
     try:
-        return json.loads(REGISTRY_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+        yield
+    finally:
+        for lock in reversed(locks):
+            lock.release()
 
 
-def _save_registry(registry: dict[str, dict[str, Any]]) -> None:
+def _connect(db_path: Path) -> sqlite3.Connection:
     _ensure_storage()
-    REGISTRY_FILE.write_text(json.dumps(registry, indent=2, sort_keys=True), encoding="utf-8")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
 
 
-def _project_index_path(name: str) -> Path:
-    return INDEX_DIR / f"{_slugify(name)}.json"
+def _init_metadata_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            name TEXT PRIMARY KEY,
+            root_path TEXT NOT NULL,
+            db_path TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            indexed_at TEXT,
+            file_count INTEGER NOT NULL DEFAULT 0,
+            supported_file_count INTEGER NOT NULL DEFAULT 0,
+            symbol_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path);
+        CREATE INDEX IF NOT EXISTS idx_projects_description ON projects(description);
+        CREATE INDEX IF NOT EXISTS idx_projects_mode ON projects(mode);
+        """
+    )
+
+
+def _init_project_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS project_state (
+            project_name TEXT PRIMARY KEY,
+            root_path TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            indexed_at TEXT,
+            file_count INTEGER NOT NULL DEFAULT 0,
+            supported_file_count INTEGER NOT NULL DEFAULT 0,
+            symbol_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rel_path TEXT NOT NULL UNIQUE,
+            abs_path TEXT NOT NULL,
+            language TEXT NOT NULL,
+            root_type TEXT NOT NULL,
+            node_count INTEGER NOT NULL,
+            has_error INTEGER NOT NULL,
+            byte_length INTEGER NOT NULL,
+            skeleton TEXT NOT NULL,
+            indexed_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS symbols (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id INTEGER NOT NULL,
+            symbol_order INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            depth INTEGER NOT NULL,
+            start_row INTEGER NOT NULL,
+            start_column INTEGER NOT NULL,
+            end_row INTEGER NOT NULL,
+            end_column INTEGER NOT NULL,
+            signature TEXT NOT NULL,
+            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_files_rel_path ON files(rel_path);
+        CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
+        CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id);
+        CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+        """
+    )
 
 
 def _normalize_project(project: str) -> str:
     return project.strip()
 
 
+def _row_to_project_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "name": row["name"],
+        "root_path": row["root_path"],
+        "db_path": row["db_path"],
+        "mode": row["mode"],
+        "description": row["description"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "indexed_at": row["indexed_at"],
+        "file_count": row["file_count"],
+        "supported_file_count": row["supported_file_count"],
+        "symbol_count": row["symbol_count"],
+    }
+
+
+def _row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "project": row["project_name"],
+        "root_path": row["root_path"],
+        "file_count": row["file_count"],
+        "supported_file_count": row["supported_file_count"],
+        "symbol_count": row["symbol_count"],
+        "indexed_at": row["indexed_at"],
+    }
+
+
+def _symbol_rows(conn: sqlite3.Connection, file_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature
+        FROM symbols
+        WHERE file_id = ?
+        ORDER BY symbol_order ASC, id ASC
+        """,
+        (file_id,),
+    ).fetchall()
+    return [
+        {
+            "type": row["type"],
+            "name": row["name"],
+            "depth": row["depth"],
+            "start_point": {"row": row["start_row"], "column": row["start_column"]},
+            "end_point": {"row": row["end_row"], "column": row["end_column"]},
+            "signature": row["signature"],
+        }
+        for row in rows
+    ]
+
+
+def _upsert_file_analysis(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    root_path: Path,
+    resolved_path: Path,
+    analysis: dict[str, Any],
+    indexed_at: str,
+) -> None:
+    parsed = analysis["parsed"]
+    root_node = parsed.tree.root_node
+    rel_path = str(resolved_path.relative_to(root_path))
+    skeleton = analysis["skeleton"]
+    byte_length = len(parsed.source_code.encode("utf-8"))
+
+    conn.execute(
+        """
+        INSERT INTO files (
+            rel_path, abs_path, language, root_type, node_count, has_error, byte_length, skeleton, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(rel_path) DO UPDATE SET
+            abs_path = excluded.abs_path,
+            language = excluded.language,
+            root_type = excluded.root_type,
+            node_count = excluded.node_count,
+            has_error = excluded.has_error,
+            byte_length = excluded.byte_length,
+            skeleton = excluded.skeleton,
+            indexed_at = excluded.indexed_at
+        """,
+        (
+            rel_path,
+            str(resolved_path),
+            parsed.language,
+            root_node.type,
+            root_node.descendant_count,
+            int(root_node.has_error),
+            byte_length,
+            skeleton,
+            indexed_at,
+        ),
+    )
+    file_id = conn.execute("SELECT id FROM files WHERE rel_path = ?", (rel_path,)).fetchone()[0]
+    conn.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
+    for order, symbol in enumerate(analysis["symbols"]):
+        conn.execute(
+            """
+            INSERT INTO symbols (
+                file_id, symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                file_id,
+                order,
+                symbol["type"],
+                symbol["name"],
+                symbol["depth"],
+                symbol["start_point"]["row"],
+                symbol["start_point"]["column"],
+                symbol["end_point"]["row"],
+                symbol["end_point"]["column"],
+                symbol["signature"],
+            ),
+        )
+
+
+def _load_project_metadata(project: str) -> dict[str, Any] | None:
+    if not METADATA_DB.exists():
+        return None
+    with _connect(METADATA_DB) as conn:
+        _init_metadata_schema(conn)
+        row = conn.execute("SELECT * FROM projects WHERE name = ?", (project,)).fetchone()
+        if row is None:
+            return None
+        return _row_to_project_dict(row)
+
+
 def list_projects() -> list[dict[str, Any]]:
-    registry = _load_registry()
-    projects = []
-    for name in sorted(registry):
-        item = registry[name].copy()
-        item["name"] = name
-        projects.append(item)
-    return projects
+    if not METADATA_DB.exists():
+        return []
+    with _connect(METADATA_DB) as conn:
+        _init_metadata_schema(conn)
+        rows = conn.execute("SELECT * FROM projects ORDER BY name ASC").fetchall()
+        return [_row_to_project_dict(row) for row in rows]
 
 
 def search_projects(query: str) -> list[dict[str, Any]]:
-    needle = query.strip().lower()
+    needle = query.strip()
     if not needle:
         return list_projects()
 
-    matches: list[dict[str, Any]] = []
-    for project in list_projects():
-        haystack = " ".join(
-            str(project.get(key, "")) for key in ("name", "root_path", "mode", "description")
-        ).lower()
-        if needle in haystack:
-            matches.append(project)
-    return matches
+    pattern = f"%{needle.lower()}%"
+    if not METADATA_DB.exists():
+        return []
+
+    with _connect(METADATA_DB) as conn:
+        _init_metadata_schema(conn)
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM projects
+            WHERE lower(name) LIKE ?
+               OR lower(root_path) LIKE ?
+               OR lower(mode) LIKE ?
+               OR lower(description) LIKE ?
+            ORDER BY name ASC
+            """,
+            (pattern, pattern, pattern, pattern),
+        ).fetchall()
+        return [_row_to_project_dict(row) for row in rows]
 
 
 def get_project(project: str) -> dict[str, Any]:
     project = _normalize_project(project)
-    registry = _load_registry()
-    if project not in registry:
+    metadata = _load_project_metadata(project)
+    if metadata is None:
         raise ValueError(f"Unknown project: {project}")
-    result = registry[project].copy()
-    result["name"] = project
-    return result
+    return metadata
 
 
 def add_project(project: str, root_path: str, mode: str = "file", description: str = "") -> dict[str, Any]:
@@ -124,39 +360,64 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Project root does not exist or is not a directory: {root}")
 
-    registry = _load_registry()
-    existing = registry.get(project, {})
-    created_at = existing.get("created_at", _now())
-    updated_at = _now()
-    index_path = str(_project_index_path(project)) if mode == "directory" else existing.get("index_path")
+    db_path = _project_db_path(project)
+    now = _now()
 
-    record = ProjectRecord(
-        name=project,
-        root_path=str(root),
-        mode=mode,
-        description=description.strip() or existing.get("description", ""),
-        created_at=created_at,
-        updated_at=updated_at,
-        indexed_at=existing.get("indexed_at"),
-        file_count=int(existing.get("file_count", 0) or 0),
-        supported_file_count=int(existing.get("supported_file_count", 0) or 0),
-        symbol_count=int(existing.get("symbol_count", 0) or 0),
-        index_path=index_path,
-    )
+    with _acquire_locks(METADATA_DB, db_path):
+        with _connect(METADATA_DB) as conn:
+            _init_metadata_schema(conn)
+            existing = conn.execute("SELECT * FROM projects WHERE name = ?", (project,)).fetchone()
+            created_at = existing["created_at"] if existing else now
+            indexed_at = existing["indexed_at"] if existing else None
+            file_count = int(existing["file_count"] if existing else 0)
+            supported_file_count = int(existing["supported_file_count"] if existing else 0)
+            symbol_count = int(existing["symbol_count"] if existing else 0)
+            conn.execute(
+                """
+                INSERT INTO projects (
+                    name, root_path, db_path, mode, description, created_at, updated_at,
+                    indexed_at, file_count, supported_file_count, symbol_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    db_path = excluded.db_path,
+                    mode = excluded.mode,
+                    description = excluded.description,
+                    updated_at = excluded.updated_at,
+                    indexed_at = COALESCE(projects.indexed_at, excluded.indexed_at),
+                    file_count = excluded.file_count,
+                    supported_file_count = excluded.supported_file_count,
+                    symbol_count = excluded.symbol_count
+                """,
+                (
+                    project,
+                    str(root),
+                    str(db_path),
+                    mode,
+                    description.strip() or (existing["description"] if existing else ""),
+                    created_at,
+                    now,
+                    indexed_at,
+                    file_count,
+                    supported_file_count,
+                    symbol_count,
+                ),
+            )
 
-    registry[project] = {
-        "root_path": record.root_path,
-        "mode": record.mode,
-        "description": record.description,
-        "created_at": record.created_at,
-        "updated_at": record.updated_at,
-        "indexed_at": record.indexed_at,
-        "file_count": record.file_count,
-        "supported_file_count": record.supported_file_count,
-        "symbol_count": record.symbol_count,
-        "index_path": record.index_path,
-    }
-    _save_registry(registry)
+        with _connect(db_path) as conn:
+            _init_project_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO project_state (
+                    project_name, root_path, created_at, updated_at, indexed_at,
+                    file_count, supported_file_count, symbol_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_name) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    updated_at = excluded.updated_at
+                """,
+                (project, str(root), created_at, now, indexed_at, file_count, supported_file_count, symbol_count),
+            )
 
     result = get_project(project)
     if mode == "directory":
@@ -200,75 +461,199 @@ def _iter_source_files(root: Path) -> list[Path]:
 def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
     project_data = get_project(project)
     root = Path(project_data["root_path"])
-    index_path = Path(project_data["index_path"] or _project_index_path(project))
+    db_path = Path(project_data["db_path"])
+    indexed_at = _now()
 
-    if index_path.exists() and not refresh:
-        cached = json.loads(index_path.read_text(encoding="utf-8"))
-        return cached["summary"]
+    if not refresh:
+        with _connect(db_path) as conn:
+            _init_project_schema(conn)
+            row = conn.execute(
+                """
+                SELECT project_name, root_path, file_count, supported_file_count, symbol_count, indexed_at
+                FROM project_state
+                WHERE project_name = ?
+                """,
+                (project,),
+            ).fetchone()
+            if row is not None:
+                return _row_to_summary(row)
 
-    files = _iter_source_files(root)
-    file_entries: list[dict[str, Any]] = []
-    total_symbols = 0
+    with _db_lock(db_path):
+        with _connect(db_path) as conn:
+            _init_project_schema(conn)
+            if refresh:
+                conn.execute("DELETE FROM symbols")
+                conn.execute("DELETE FROM files")
 
-    for path in files:
-        analysis = analyze_file(str(path))
-        parsed = analysis["parsed"]
-        rel_path = str(path.relative_to(root))
-        root_node = parsed.tree.root_node
-        file_entries.append(
-            {
-                "path": rel_path,
-                "language": parsed.language,
-                "root_type": root_node.type,
-                "node_count": root_node.descendant_count,
-                "has_error": root_node.has_error,
-                "skeleton": analysis["skeleton"],
-                "symbols": analysis["symbols"],
-            }
-        )
-        total_symbols += len(analysis["symbols"])
+            files = _iter_source_files(root)
+            total_symbols = 0
+            for path in files:
+                analysis = analyze_file(str(path))
+                _upsert_file_analysis(
+                    conn,
+                    project=project,
+                    root_path=root,
+                    resolved_path=path,
+                    analysis=analysis,
+                    indexed_at=indexed_at,
+                )
+                total_symbols += len(analysis["symbols"])
 
-    summary = {
+            existing_state = conn.execute(
+                "SELECT created_at FROM project_state WHERE project_name = ?",
+                (project,),
+            ).fetchone()
+            created_at = existing_state["created_at"] if existing_state else indexed_at
+            conn.execute(
+                """
+                INSERT INTO project_state (
+                    project_name, root_path, created_at, updated_at, indexed_at,
+                    file_count, supported_file_count, symbol_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_name) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    updated_at = excluded.updated_at,
+                    indexed_at = excluded.indexed_at,
+                    file_count = excluded.file_count,
+                    supported_file_count = excluded.supported_file_count,
+                    symbol_count = excluded.symbol_count
+                """,
+                (
+                    project,
+                    str(root),
+                    created_at,
+                    indexed_at,
+                    indexed_at,
+                    len(files),
+                    len(files),
+                    total_symbols,
+                ),
+            )
+
+    with _acquire_locks(METADATA_DB):
+        with _connect(METADATA_DB) as conn:
+            _init_metadata_schema(conn)
+            conn.execute(
+                """
+                UPDATE projects
+                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?
+                WHERE name = ?
+                """,
+                (indexed_at, indexed_at, len(files), len(files), total_symbols, project),
+            )
+
+    return {
         "project": project,
         "root_path": str(root),
         "mode": project_data["mode"],
         "file_count": len(files),
         "supported_file_count": len(files),
         "symbol_count": total_symbols,
-        "indexed_at": _now(),
+        "indexed_at": indexed_at,
     }
-    payload = {"summary": summary, "files": file_entries}
-    _ensure_storage()
-    index_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    registry = _load_registry()
-    if project in registry:
-        registry[project]["indexed_at"] = summary["indexed_at"]
-        registry[project]["file_count"] = summary["file_count"]
-        registry[project]["supported_file_count"] = summary["supported_file_count"]
-        registry[project]["symbol_count"] = summary["symbol_count"]
-        registry[project]["index_path"] = str(index_path)
-        registry[project]["updated_at"] = summary["indexed_at"]
-        _save_registry(registry)
 
-    return summary
+def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        """
+        SELECT rel_path, abs_path, language, root_type, node_count, has_error, byte_length, skeleton, indexed_at
+        FROM files
+        WHERE id = ?
+        """,
+        (file_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Indexed file record disappeared")
+    return {
+        "path": row["rel_path"],
+        "abs_path": row["abs_path"],
+        "language": row["language"],
+        "root_type": row["root_type"],
+        "node_count": row["node_count"],
+        "has_error": bool(row["has_error"]),
+        "byte_length": row["byte_length"],
+        "skeleton": row["skeleton"],
+        "indexed_at": row["indexed_at"],
+    }
 
 
 def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
     project_data = get_project(project)
     resolved = resolve_project_path(project, file_path)
+    root = Path(project_data["root_path"]).resolve()
+    db_path = Path(project_data["db_path"])
+    rel_path = str(resolved.relative_to(root))
+
     analysis = analyze_file(str(resolved))
-    parsed = analysis["parsed"]
-    root_node = parsed.tree.root_node
+    indexed_at = _now()
+
+    with _db_lock(db_path):
+        with _connect(db_path) as conn:
+            _init_project_schema(conn)
+            _upsert_file_analysis(
+                conn,
+                project=project,
+                root_path=root,
+                resolved_path=resolved,
+                analysis=analysis,
+                indexed_at=indexed_at,
+            )
+            file_row = conn.execute("SELECT id FROM files WHERE rel_path = ?", (rel_path,)).fetchone()
+            if file_row is None:
+                raise ValueError("Failed to persist file analysis")
+            file_id = int(file_row[0])
+            file_data = _read_file_record(conn, file_id)
+            symbols = _symbol_rows(conn, file_id)
+            file_count = conn.execute("SELECT COUNT(*) AS count FROM files").fetchone()["count"]
+            symbol_count = conn.execute("SELECT COUNT(*) AS count FROM symbols").fetchone()["count"]
+            conn.execute(
+                """
+                INSERT INTO project_state (
+                    project_name, root_path, created_at, updated_at, indexed_at,
+                    file_count, supported_file_count, symbol_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_name) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    updated_at = excluded.updated_at,
+                    indexed_at = excluded.indexed_at,
+                    file_count = excluded.file_count,
+                    supported_file_count = excluded.supported_file_count,
+                    symbol_count = excluded.symbol_count
+                """,
+                (
+                    project,
+                    str(root),
+                    indexed_at,
+                    indexed_at,
+                    indexed_at,
+                    int(file_count),
+                    int(file_count),
+                    int(symbol_count),
+                ),
+            )
+
+    with _acquire_locks(METADATA_DB):
+        with _connect(METADATA_DB) as conn:
+            _init_metadata_schema(conn)
+            conn.execute(
+                """
+                UPDATE projects
+                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?
+                WHERE name = ?
+                """,
+                (indexed_at, indexed_at, int(file_count), int(file_count), int(symbol_count), project),
+            )
+
     return {
         "project": project,
-        "file_path": str(resolved.relative_to(Path(project_data["root_path"]))),
+        "file_path": file_data["path"],
         "supported": True,
-        "language": parsed.language,
-        "root_type": root_node.type,
-        "node_count": root_node.descendant_count,
-        "has_error": root_node.has_error,
-        "byte_length": len(parsed.source_code.encode("utf-8")),
-        "skeleton": analysis["skeleton"],
-        "symbols": analysis["symbols"],
+        "language": file_data["language"],
+        "root_type": file_data["root_type"],
+        "node_count": file_data["node_count"],
+        "has_error": file_data["has_error"],
+        "byte_length": file_data["byte_length"],
+        "skeleton": file_data["skeleton"],
+        "symbols": symbols,
+        "indexed_at": file_data["indexed_at"],
     }
