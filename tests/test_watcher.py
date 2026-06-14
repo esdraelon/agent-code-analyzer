@@ -95,32 +95,96 @@ def test_ensure_project_schema_adds_missing_file_columns(tmp_path: Path, monkeyp
     assert "file_mtime_ns" in columns
 
 
-def test_project_watcher_service_scans_registered_projects(tmp_path: Path, monkeypatch) -> None:
+def test_project_watcher_service_builds_fswatch_command_for_recursive_roots(tmp_path: Path, monkeypatch) -> None:
     _isolate_project_state(tmp_path, monkeypatch)
 
-    seen: list[str] = []
-    monkeypatch.setattr(watcher_module, "list_projects", lambda: [{"name": "one"}, {"name": "two"}])
+    root_a = tmp_path / "alpha"
+    root_b = tmp_path / "beta"
+    root_a.mkdir()
+    root_b.mkdir()
+    add_project("alpha", str(root_a), mode="directory")
+    add_project("beta", str(root_b), mode="directory")
+
+    service = ProjectWatcherService()
+    projects_list = [{"name": "alpha", "root_path": str(root_a)}, {"name": "beta", "root_path": str(root_b)}]
+
+    command = service._build_fswatch_command(projects_list)
+
+    assert command[0] == "fswatch"
+    assert command[1:3] == ["-r", "--format=%p"]
+    assert command[3:] == [str(root_a.resolve()), str(root_b.resolve())]
+
+
+def test_project_watcher_service_reindexes_projects_for_matching_fswatch_events(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
+
+    root_a = tmp_path / "alpha"
+    root_b = tmp_path / "beta"
+    root_a.mkdir()
+    root_b.mkdir()
+
+    events_a = root_a / "changed.py"
+    events_b = root_b / "changed.py"
+    events_a.write_text("print('alpha')\n", encoding="utf-8")
+    events_b.write_text("print('beta')\n", encoding="utf-8")
+
+    synced: list[str] = []
     monkeypatch.setattr(
         watcher_module,
         "sync_project_tree",
-        lambda name: seen.append(name) or {"project": name, "changed_file_count": 1, "deleted_file_count": 0},
+        lambda name: synced.append(name) or {"project": name, "changed_file_count": 1, "deleted_file_count": 0},
     )
 
+    class FakeStdout:
+        def __init__(self, lines: list[str]) -> None:
+            self._lines = list(lines)
+
+        def readline(self) -> str:
+            return self._lines.pop(0) if self._lines else ""
+
+    class FakeProcess:
+        def __init__(self, lines: list[str]) -> None:
+            self.stdout = FakeStdout(lines)
+            self.stderr = FakeStdout([])
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return 0 if not self.stdout._lines else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout: float | None = None):
+            return 0
+
+    fake_process = FakeProcess([f"{events_a.resolve()}\n", f"{events_b.resolve()}\n", f"{tmp_path / 'outside.py'}\n", "\n"])
+    monkeypatch.setattr(watcher_module.shutil, "which", lambda name: "/usr/bin/fswatch")
+    monkeypatch.setattr(watcher_module.subprocess, "Popen", lambda *args, **kwargs: fake_process)
+
     service = ProjectWatcherService(poll_interval=0.01)
-    results = service.scan_once()
+    service._stop_event.set()
+    service._stop_event.clear()
 
-    assert seen == ["one", "two"]
-    assert results == [
-        {"project": "one", "changed_file_count": 1, "deleted_file_count": 0},
-        {"project": "two", "changed_file_count": 1, "deleted_file_count": 0},
-    ]
-    assert service.last_results == results
+    service._run_once(
+        [
+            {"name": "alpha", "root_path": str(root_a)},
+            {"name": "beta", "root_path": str(root_b)},
+        ]
+    )
+
+    assert synced == ["alpha", "beta", "alpha", "beta"]
 
 
-def test_project_watcher_service_lifecycle_and_run_loop(monkeypatch) -> None:
-    start_calls: list[str] = []
-    join_calls: list[float] = []
-    scan_calls: list[str] = []
+def test_project_watcher_service_start_and_stop_manage_watcher_thread(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
+
+    root = tmp_path / "alpha"
+    root.mkdir()
+    add_project("alpha", str(root), mode="directory")
 
     class FakeThread:
         def __init__(self, target, name, daemon) -> None:
@@ -128,62 +192,79 @@ def test_project_watcher_service_lifecycle_and_run_loop(monkeypatch) -> None:
             self.name = name
             self.daemon = daemon
             self.started = False
-            self.alive = False
+            self.joined = False
 
         def start(self) -> None:
-            start_calls.append(self.name)
             self.started = True
-            self.alive = True
 
         def is_alive(self) -> bool:
-            return self.alive
+            return self.started and not self.joined
 
         def join(self, timeout: float | None = None) -> None:
-            join_calls.append(float(timeout or 0.0))
-            self.alive = False
+            self.joined = True
 
-    class FakeEvent:
-        def __init__(self, waits: list[bool]) -> None:
-            self._waits = list(waits)
-            self.set_called = False
-            self.clear_called = False
+    class FakeStdout:
+        def readline(self) -> str:
+            return ""
 
-        def clear(self) -> None:
-            self.clear_called = True
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = FakeStdout()
+            self.stderr = FakeStdout()
+            self.terminated = False
+            self.killed = False
 
-        def set(self) -> None:
-            self.set_called = True
+        def poll(self):
+            return None
 
-        def wait(self, interval: float) -> bool:
-            return self._waits.pop(0)
+        def terminate(self):
+            self.terminated = True
 
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout: float | None = None):
+            return 0
+
+    fake_process = FakeProcess()
+    monkeypatch.setattr(watcher_module.shutil, "which", lambda name: "/usr/bin/fswatch")
+    monkeypatch.setattr(watcher_module.subprocess, "Popen", lambda *args, **kwargs: fake_process)
     monkeypatch.setattr(watcher_module.threading, "Thread", FakeThread)
 
     service = ProjectWatcherService(poll_interval=0.01)
-    service._stop_event = FakeEvent([False, True])
+    scan_calls: list[str] = []
     monkeypatch.setattr(service, "scan_once", lambda: scan_calls.append("scan") or [])
 
     started = service.start()
     assert started is service
-    assert start_calls == ["agent-code-analyzer-watcher"]
+    assert scan_calls == ["scan"]
     assert service._thread is not None and service._thread.started is True
-
-    service.start()
-    assert start_calls == ["agent-code-analyzer-watcher"]
-
+    assert service.start() is service
+    assert scan_calls == ["scan"]
+    service._process = fake_process  # type: ignore[assignment]
     service.stop()
-    assert join_calls == [5.0]
+    assert fake_process.terminated is True
     assert service._thread is None
-    assert service._stop_event.set_called is True
 
-    service.close()
 
-    with service as entered:
-        assert entered is service
-        assert service._thread is not None
+def test_project_watcher_service_requires_fswatch_binary(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
 
-    assert service._thread is None
-    assert service._stop_event.clear_called is True
+    service = ProjectWatcherService()
+    monkeypatch.setattr(watcher_module.shutil, "which", lambda name: None)
 
-    service._run()
-    assert scan_calls == ["scan", "scan"]
+    try:
+        service._ensure_fswatch_available()
+    except RuntimeError as exc:
+        assert "fswatch" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
+def test_project_watcher_service_noops_for_empty_project_list(monkeypatch) -> None:
+    service = ProjectWatcherService()
+    monkeypatch.setattr(watcher_module, "subprocess", watcher_module.subprocess)
+
+    service._run_once([])
+
+
