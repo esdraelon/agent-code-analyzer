@@ -57,6 +57,113 @@ SQL_KEYWORDS_RE = re.compile(
 
 
 @dataclass(frozen=True)
+class EmbeddedLanguageBlock:
+    language: str
+    source_bytes: bytes
+    source_code: str
+    start_point: dict[str, int]
+    end_point: dict[str, int]
+
+
+@dataclass(frozen=True)
+class TreeSitterSourceParser:
+    """Small parsing facade that keeps parser construction in one place."""
+
+    def parse_bytes(
+        self,
+        language_name: str,
+        source_bytes: bytes,
+        *,
+        source_code: str,
+        file_path: str,
+    ) -> "ParsedFile":
+        parser = Parser()
+        parser.set_language(resolve_language(language_name))
+        tree = parser.parse(source_bytes)
+        return ParsedFile(
+            file_path=file_path,
+            language=language_name,
+            source_bytes=source_bytes,
+            source_code=source_code,
+            tree=tree,
+            languages=(language_name,),
+        )
+
+    def parse_text(self, language_name: str, source_text: str, file_path: str = "<memory>") -> "ParsedFile":
+        source_bytes = source_text.encode("utf-8")
+        return self.parse_bytes(
+            language_name,
+            source_bytes,
+            source_code=source_text,
+            file_path=file_path,
+        )
+
+    def parse_file(self, file_path: str, language_name: str) -> "ParsedFile":
+        source_path = Path(file_path)
+        source_bytes, source_code = _read_source_text(source_path)
+        return self.parse_bytes(
+            language_name,
+            source_bytes,
+            source_code=source_code,
+            file_path=str(source_path),
+        )
+
+
+@dataclass(frozen=True)
+class SymbolLanguageStrategy:
+    """Encapsulate language attribution rules for files and embedded fragments."""
+
+    def symbol_languages(self, base_language: str, source_text: str) -> list[str]:
+        languages = [base_language]
+        if base_language in {"php", "javascript", "typescript", "tsx", "jsx", "python", "ruby", "go"}:
+            if SQL_KEYWORDS_RE.search(source_text) and "sql" not in languages:
+                languages.append("sql")
+        if base_language == "html":
+            lowered = source_text.lower()
+            if "<script" in lowered and "javascript" not in languages:
+                languages.append("javascript")
+            if "<style" in lowered and "css" not in languages:
+                languages.append("css")
+        return _dedupe_languages(languages)
+
+    def iter_embedded_blocks(self, parsed: "ParsedFile") -> Iterator[EmbeddedLanguageBlock]:
+        if parsed.language != "html":
+            return
+
+        for pattern, language in (
+            (rb"<script\b[^>]*>(.*?)</script>", "javascript"),
+            (rb"<style\b[^>]*>(.*?)</style>", "css"),
+        ):
+            for match in re.finditer(pattern, parsed.source_bytes, flags=re.IGNORECASE | re.DOTALL):
+                content_start = match.start(1)
+                content_end = match.end(1)
+                block_source_bytes = parsed.source_bytes[content_start:content_end]
+                block_source_text = _decode_source_bytes(block_source_bytes)
+                start_row, start_column = _byte_offset_to_point(parsed.source_bytes, content_start)
+                end_row, end_column = _byte_offset_to_point(parsed.source_bytes, content_end)
+                yield EmbeddedLanguageBlock(
+                    language=language,
+                    source_bytes=block_source_bytes,
+                    source_code=block_source_text,
+                    start_point={"row": start_row, "column": start_column},
+                    end_point={"row": end_row, "column": end_column},
+                )
+
+    def file_languages(
+        self,
+        parsed: "ParsedFile",
+        *,
+        symbol_languages: list[str],
+        embedded_languages: list[str],
+    ) -> list[str]:
+        return _dedupe_languages([parsed.language, *embedded_languages, *symbol_languages])
+
+
+SOURCE_PARSER = TreeSitterSourceParser()
+LANGUAGE_STRATEGY = SymbolLanguageStrategy()
+
+
+@dataclass(frozen=True)
 class ParsedFile:
     file_path: str
     language: str
@@ -91,18 +198,7 @@ def _read_source_text(source_path: Path) -> tuple[bytes, str]:
 
 
 def parse_source_text(language_name: str, source_text: str, file_path: str = "<memory>") -> ParsedFile:
-    source_bytes = source_text.encode("utf-8")
-    parser = Parser()
-    parser.set_language(resolve_language(language_name))
-    tree = parser.parse(source_bytes)
-    return ParsedFile(
-        file_path=file_path,
-        language=language_name,
-        source_bytes=source_bytes,
-        source_code=source_text,
-        tree=tree,
-        languages=(language_name,),
-    )
+    return SOURCE_PARSER.parse_text(language_name, source_text, file_path=file_path)
 
 
 def parse_file(file_path: str) -> ParsedFile:
@@ -110,19 +206,7 @@ def parse_file(file_path: str) -> ParsedFile:
     if not language_name:
         raise ValueError(f"Unsupported file extension for Tree-sitter: {file_path}")
 
-    source_path = Path(file_path)
-    source_bytes, source_code = _read_source_text(source_path)
-    parser = Parser()
-    parser.set_language(resolve_language(language_name))
-    tree = parser.parse(source_bytes)
-    return ParsedFile(
-        file_path=str(source_path),
-        language=language_name,
-        source_bytes=source_bytes,
-        source_code=source_code,
-        tree=tree,
-        languages=(language_name,),
-    )
+    return SOURCE_PARSER.parse_file(file_path, language_name)
 
 
 def _byte_offset_to_point(source_bytes: bytes, offset: int) -> tuple[int, int]:
@@ -188,16 +272,7 @@ def _dedupe_languages(languages: list[str]) -> list[str]:
 
 
 def _symbol_languages(base_language: str, signature: str, source_text: str) -> list[str]:
-    languages = [base_language]
-    if base_language in {"php", "javascript", "typescript", "tsx", "jsx", "python", "ruby", "go"}:
-        if SQL_KEYWORDS_RE.search(source_text) and "sql" not in languages:
-            languages.append("sql")
-    if base_language == "html":
-        if "<script" in source_text.lower() and "javascript" not in languages:
-            languages.append("javascript")
-        if "<style" in source_text.lower() and "css" not in languages:
-            languages.append("css")
-    return _dedupe_languages(languages)
+    return LANGUAGE_STRATEGY.symbol_languages(base_language, source_text)
 
 
 def _symbol_record(
@@ -259,24 +334,14 @@ def _iter_html_embedded_blocks(parsed: ParsedFile) -> Iterator[dict[str, Any]]:
     if parsed.language != "html":
         return
 
-    for pattern, language in (
-        (rb"<script\b[^>]*>(.*?)</script>", "javascript"),
-        (rb"<style\b[^>]*>(.*?)</style>", "css"),
-    ):
-        for match in re.finditer(pattern, parsed.source_bytes, flags=re.IGNORECASE | re.DOTALL):
-            content_start = match.start(1)
-            content_end = match.end(1)
-            block_source_bytes = parsed.source_bytes[content_start:content_end]
-            block_source_text = _decode_source_bytes(block_source_bytes)
-            start_row, start_column = _byte_offset_to_point(parsed.source_bytes, content_start)
-            end_row, end_column = _byte_offset_to_point(parsed.source_bytes, content_end)
-            yield {
-                "language": language,
-                "source_bytes": block_source_bytes,
-                "source_code": block_source_text,
-                "start_point": {"row": start_row, "column": start_column},
-                "end_point": {"row": end_row, "column": end_column},
-            }
+    for block in LANGUAGE_STRATEGY.iter_embedded_blocks(parsed):
+        yield {
+            "language": block.language,
+            "source_bytes": block.source_bytes,
+            "source_code": block.source_code,
+            "start_point": block.start_point,
+            "end_point": block.end_point,
+        }
 
 
 def _symbol_health_report(
@@ -334,32 +399,32 @@ def analyze_file(file_path: str) -> dict[str, Any]:
         raise ValueError(f"Unsupported file extension for Tree-sitter: {file_path}")
 
     parsed = parse_file(file_path)
-    skeleton_lines, symbols, languages_seen = _collect_target_symbols(parsed)
-    file_languages = [parsed.language]
+    skeleton_lines, symbols, symbol_languages = _collect_target_symbols(parsed)
+    embedded_languages: list[str] = []
 
     if parsed.language == "html":
-        for block in _iter_html_embedded_blocks(parsed):
+        for block in LANGUAGE_STRATEGY.iter_embedded_blocks(parsed):
             fragment = parse_source_text(
-                block["language"],
-                block["source_code"],
-                file_path=f"{parsed.file_path}::{block['language']}"
+                block.language,
+                block.source_code,
+                file_path=f"{parsed.file_path}::{block.language}",
             )
             fragment_skeleton, fragment_symbols, fragment_languages = _collect_target_symbols(
                 fragment,
-                row_offset=block["start_point"]["row"],
-                column_offset=block["start_point"]["column"],
-                base_language=block["language"],
+                row_offset=block.start_point["row"],
+                column_offset=block.start_point["column"],
+                base_language=block.language,
             )
             skeleton_lines.extend(fragment_skeleton)
             symbols.extend(fragment_symbols)
-            languages_seen.extend(fragment_languages)
-            file_languages.append(block["language"])
+            symbol_languages.extend(fragment_languages)
+            embedded_languages.append(block.language)
 
-    for symbol in symbols:
-        languages_seen.extend(symbol.get("languages", []))
-
-    file_languages.extend(languages_seen)
-    file_languages = _dedupe_languages(file_languages)
+    file_languages = LANGUAGE_STRATEGY.file_languages(
+        parsed,
+        symbol_languages=symbol_languages,
+        embedded_languages=embedded_languages,
+    )
 
     return {
         "parsed": parsed,

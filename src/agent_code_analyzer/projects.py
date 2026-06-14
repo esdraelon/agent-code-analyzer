@@ -48,6 +48,437 @@ class ProjectRecord:
     symbol_count: int = 0
 
 
+class ProjectRowMapper:
+    """Map sqlite rows and language metadata into plain project dictionaries."""
+
+    @staticmethod
+    def decode_languages(value: Any) -> list[str]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item)]
+        if isinstance(value, str):
+            try:
+                raw = json.loads(value)
+            except json.JSONDecodeError:
+                return [value] if value else []
+            if isinstance(raw, list):
+                return [str(item) for item in raw if str(item)]
+        return []
+
+    @staticmethod
+    def encode_languages(languages: list[str]) -> str:
+        return json.dumps(ProjectRowMapper.merge_languages([str(language) for language in languages if str(language)]))
+
+    @staticmethod
+    def row_languages(row: sqlite3.Row) -> list[str]:
+        return ProjectRowMapper.decode_languages(row["languages"])
+
+    @staticmethod
+    def merge_languages(*groups: list[str]) -> list[str]:
+        merged: list[str] = []
+        for group in groups:
+            for language in group:
+                if language and language not in merged:
+                    merged.append(language)
+        return merged
+
+    @staticmethod
+    def row_to_project_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "name": row["name"],
+            "root_path": row["root_path"],
+            "db_path": row["db_path"],
+            "mode": row["mode"],
+            "description": row["description"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "indexed_at": row["indexed_at"],
+            "file_count": row["file_count"],
+            "supported_file_count": row["supported_file_count"],
+            "symbol_count": row["symbol_count"],
+            "languages": ProjectRowMapper.decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
+        }
+
+    @staticmethod
+    def row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "project": row["project_name"],
+            "root_path": row["root_path"],
+            "file_count": row["file_count"],
+            "supported_file_count": row["supported_file_count"],
+            "symbol_count": row["symbol_count"],
+            "indexed_at": row["indexed_at"],
+            "languages": ProjectRowMapper.decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
+        }
+
+    @staticmethod
+    def project_languages_from_conn(conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute("SELECT languages FROM files ORDER BY id ASC").fetchall()
+        return ProjectRowMapper.merge_languages(*[ProjectRowMapper.decode_languages(row["languages"]) for row in rows])
+
+    @staticmethod
+    def symbol_rows(conn: sqlite3.Connection, file_id: int) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature, languages
+            FROM symbols
+            WHERE file_id = ?
+            ORDER BY symbol_order ASC, id ASC
+            """,
+            (file_id,),
+        ).fetchall()
+        return [
+            {
+                "type": row["type"],
+                "name": row["name"],
+                "depth": row["depth"],
+                "start_point": {"row": row["start_row"], "column": row["start_column"]},
+                "end_point": {"row": row["end_row"], "column": row["end_column"]},
+                "signature": row["signature"],
+                "languages": ProjectRowMapper.decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def file_record(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "path": row["rel_path"],
+            "abs_path": row["abs_path"],
+            "language": row["language"],
+            "languages": ProjectRowMapper.decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
+            "root_type": row["root_type"],
+            "node_count": row["node_count"],
+            "has_error": bool(row["has_error"]),
+            "byte_length": row["byte_length"],
+            "file_size": row["file_size"],
+            "file_mtime_ns": row["file_mtime_ns"],
+            "skeleton": row["skeleton"],
+            "indexed_at": row["indexed_at"],
+        }
+
+
+class ProjectRepository:
+    """Repository-style helpers for sqlite-backed project persistence."""
+
+    @staticmethod
+    def connect(db_path: Path) -> sqlite3.Connection:
+        _ensure_storage()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(db_path, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    @staticmethod
+    def init_metadata_schema(conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS projects (
+                name TEXT PRIMARY KEY,
+                root_path TEXT NOT NULL,
+                db_path TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                indexed_at TEXT,
+                file_count INTEGER NOT NULL DEFAULT 0,
+                supported_file_count INTEGER NOT NULL DEFAULT 0,
+                symbol_count INTEGER NOT NULL DEFAULT 0,
+                languages TEXT NOT NULL DEFAULT '[]'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path);
+            CREATE INDEX IF NOT EXISTS idx_projects_description ON projects(description);
+            CREATE INDEX IF NOT EXISTS idx_projects_mode ON projects(mode);
+            """
+        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+        if "languages" not in columns:
+            conn.execute("ALTER TABLE projects ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+
+    @staticmethod
+    def init_project_schema(conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS project_state (
+                project_name TEXT PRIMARY KEY,
+                root_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                indexed_at TEXT,
+                file_count INTEGER NOT NULL DEFAULT 0,
+                supported_file_count INTEGER NOT NULL DEFAULT 0,
+                symbol_count INTEGER NOT NULL DEFAULT 0,
+                languages TEXT NOT NULL DEFAULT '[]'
+            );
+
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rel_path TEXT NOT NULL UNIQUE,
+                abs_path TEXT NOT NULL,
+                language TEXT NOT NULL,
+                languages TEXT NOT NULL DEFAULT '[]',
+                root_type TEXT NOT NULL,
+                node_count INTEGER NOT NULL,
+                has_error INTEGER NOT NULL,
+                byte_length INTEGER NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                file_mtime_ns INTEGER NOT NULL DEFAULT 0,
+                skeleton TEXT NOT NULL,
+                indexed_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS symbols (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                symbol_order INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                depth INTEGER NOT NULL,
+                start_row INTEGER NOT NULL,
+                start_column INTEGER NOT NULL,
+                end_row INTEGER NOT NULL,
+                end_column INTEGER NOT NULL,
+                signature TEXT NOT NULL,
+                languages TEXT NOT NULL DEFAULT '[]',
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_files_rel_path ON files(rel_path);
+            CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
+            CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id);
+            CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+            """
+        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(project_state)").fetchall()}
+        if "languages" not in columns:
+            conn.execute("ALTER TABLE project_state ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+
+    @staticmethod
+    def ensure_project_schema(conn: sqlite3.Connection) -> None:
+        ProjectRepository.init_project_schema(conn)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()}
+        if "file_size" not in columns:
+            conn.execute("ALTER TABLE files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0")
+        if "file_mtime_ns" not in columns:
+            conn.execute("ALTER TABLE files ADD COLUMN file_mtime_ns INTEGER NOT NULL DEFAULT 0")
+        if "languages" not in columns:
+            conn.execute("ALTER TABLE files ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+
+        symbol_columns = {row[1] for row in conn.execute("PRAGMA table_info(symbols)").fetchall()}
+        if "languages" not in symbol_columns:
+            conn.execute("ALTER TABLE symbols ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+
+    @staticmethod
+    def load_project_metadata(project: str) -> dict[str, Any] | None:
+        if not METADATA_DB.exists():
+            return None
+        with ProjectRepository.connect(METADATA_DB) as conn:
+            ProjectRepository.init_metadata_schema(conn)
+            row = conn.execute("SELECT * FROM projects WHERE name = ?", (project,)).fetchone()
+            if row is None:
+                return None
+            return ProjectRowMapper.row_to_project_dict(row)
+
+    @staticmethod
+    def list_projects() -> list[dict[str, Any]]:
+        if not METADATA_DB.exists():
+            return []
+        with ProjectRepository.connect(METADATA_DB) as conn:
+            ProjectRepository.init_metadata_schema(conn)
+            rows = conn.execute("SELECT * FROM projects ORDER BY name ASC").fetchall()
+            return [ProjectRowMapper.row_to_project_dict(row) for row in rows]
+
+    @staticmethod
+    def search_projects(query: str) -> list[dict[str, Any]]:
+        needle = query.strip()
+        if not needle:
+            return ProjectRepository.list_projects()
+
+        pattern = f"%{needle.lower()}%"
+        if not METADATA_DB.exists():
+            return []
+
+        with ProjectRepository.connect(METADATA_DB) as conn:
+            ProjectRepository.init_metadata_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM projects
+                WHERE lower(name) LIKE ?
+                   OR lower(root_path) LIKE ?
+                   OR lower(mode) LIKE ?
+                   OR lower(description) LIKE ?
+                ORDER BY name ASC
+                """,
+                (pattern, pattern, pattern, pattern),
+            ).fetchall()
+            return [ProjectRowMapper.row_to_project_dict(row) for row in rows]
+
+    @staticmethod
+    def write_project_summary(
+        *,
+        project: str,
+        root: Path,
+        mode: str,
+        created_at: str,
+        updated_at: str,
+        indexed_at: str,
+        file_count: int,
+        supported_file_count: int,
+        symbol_count: int,
+        languages: list[str],
+    ) -> None:
+        encoded_languages = ProjectRowMapper.encode_languages(languages)
+        with ProjectRepository.connect(METADATA_DB) as conn:
+            ProjectRepository.init_metadata_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO projects (
+                    name, root_path, db_path, mode, description, created_at, updated_at,
+                    indexed_at, file_count, supported_file_count, symbol_count, languages
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    db_path = excluded.db_path,
+                    mode = excluded.mode,
+                    description = excluded.description,
+                    updated_at = excluded.updated_at,
+                    indexed_at = COALESCE(projects.indexed_at, excluded.indexed_at),
+                    file_count = excluded.file_count,
+                    supported_file_count = excluded.supported_file_count,
+                    symbol_count = excluded.symbol_count,
+                    languages = excluded.languages
+                """,
+                (
+                    project,
+                    str(root),
+                    str(_project_db_path(project)),
+                    mode,
+                    "",
+                    created_at,
+                    updated_at,
+                    indexed_at,
+                    file_count,
+                    supported_file_count,
+                    symbol_count,
+                    encoded_languages,
+                ),
+            )
+
+    @staticmethod
+    def write_project_state(
+        *,
+        project: str,
+        root: Path,
+        created_at: str,
+        updated_at: str,
+        indexed_at: str,
+        file_count: int,
+        supported_file_count: int,
+        symbol_count: int,
+        languages: list[str],
+    ) -> None:
+        encoded_languages = ProjectRowMapper.encode_languages(languages)
+        db_path = _project_db_path(project)
+        with ProjectRepository.connect(db_path) as conn:
+            ProjectRepository.ensure_project_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO project_state (
+                    project_name, root_path, created_at, updated_at, indexed_at,
+                    file_count, supported_file_count, symbol_count, languages
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_name) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    updated_at = excluded.updated_at,
+                    indexed_at = excluded.indexed_at,
+                    file_count = excluded.file_count,
+                    supported_file_count = excluded.supported_file_count,
+                    symbol_count = excluded.symbol_count,
+                    languages = excluded.languages
+                """,
+                (project, str(root), created_at, updated_at, indexed_at, file_count, supported_file_count, symbol_count, encoded_languages),
+            )
+
+    @staticmethod
+    def update_project_metadata(
+        *,
+        project: str,
+        indexed_at: str,
+        file_count: int,
+        supported_file_count: int,
+        symbol_count: int,
+        languages: list[str],
+        updated_at: str | None = None,
+    ) -> None:
+        encoded_languages = ProjectRowMapper.encode_languages(languages)
+        with ProjectRepository.connect(METADATA_DB) as conn:
+            ProjectRepository.init_metadata_schema(conn)
+            conn.execute(
+                """
+                UPDATE projects
+                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?, languages = ?
+                WHERE name = ?
+                """,
+                (indexed_at, updated_at or indexed_at, file_count, supported_file_count, symbol_count, encoded_languages, project),
+            )
+
+    @staticmethod
+    def update_project_state(
+        *,
+        project: str,
+        root: Path,
+        created_at: str,
+        updated_at: str,
+        indexed_at: str,
+        file_count: int,
+        supported_file_count: int,
+        symbol_count: int,
+        languages: list[str],
+    ) -> None:
+        ProjectRepository.write_project_state(
+            project=project,
+            root=root,
+            created_at=created_at,
+            updated_at=updated_at,
+            indexed_at=indexed_at,
+            file_count=file_count,
+            supported_file_count=supported_file_count,
+            symbol_count=symbol_count,
+            languages=languages,
+        )
+
+    @staticmethod
+    def project_languages_from_conn(conn: sqlite3.Connection) -> list[str]:
+        return ProjectRowMapper.project_languages_from_conn(conn)
+
+    @staticmethod
+    def symbol_rows(conn: sqlite3.Connection, file_id: int) -> list[dict[str, Any]]:
+        return ProjectRowMapper.symbol_rows(conn, file_id)
+
+    @staticmethod
+    def read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
+        row = conn.execute(
+            """
+            SELECT rel_path, abs_path, language, languages, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
+            FROM files
+            WHERE id = ?
+            """,
+            (file_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Indexed file record disappeared")
+        return ProjectRowMapper.file_record(row)
+
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -91,118 +522,21 @@ def _acquire_locks(*paths: Path) -> Iterator[None]:
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    _ensure_storage()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+    return ProjectRepository.connect(db_path)
 
 
 def _init_metadata_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS projects (
-            name TEXT PRIMARY KEY,
-            root_path TEXT NOT NULL,
-            db_path TEXT NOT NULL,
-            mode TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            indexed_at TEXT,
-            file_count INTEGER NOT NULL DEFAULT 0,
-            supported_file_count INTEGER NOT NULL DEFAULT 0,
-            symbol_count INTEGER NOT NULL DEFAULT 0,
-            languages TEXT NOT NULL DEFAULT '[]'
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path);
-        CREATE INDEX IF NOT EXISTS idx_projects_description ON projects(description);
-        CREATE INDEX IF NOT EXISTS idx_projects_mode ON projects(mode);
-        """
-    )
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
-    if "languages" not in columns:
-        conn.execute("ALTER TABLE projects ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+    ProjectRepository.init_metadata_schema(conn)
 
 
 
 
 def _init_project_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS project_state (
-            project_name TEXT PRIMARY KEY,
-            root_path TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            indexed_at TEXT,
-            file_count INTEGER NOT NULL DEFAULT 0,
-            supported_file_count INTEGER NOT NULL DEFAULT 0,
-            symbol_count INTEGER NOT NULL DEFAULT 0,
-            languages TEXT NOT NULL DEFAULT '[]'
-        );
-
-        CREATE TABLE IF NOT EXISTS files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            rel_path TEXT NOT NULL UNIQUE,
-            abs_path TEXT NOT NULL,
-            language TEXT NOT NULL,
-            languages TEXT NOT NULL DEFAULT '[]',
-            root_type TEXT NOT NULL,
-            node_count INTEGER NOT NULL,
-            has_error INTEGER NOT NULL,
-            byte_length INTEGER NOT NULL,
-            file_size INTEGER NOT NULL DEFAULT 0,
-            file_mtime_ns INTEGER NOT NULL DEFAULT 0,
-            skeleton TEXT NOT NULL,
-            indexed_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS symbols (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id INTEGER NOT NULL,
-            symbol_order INTEGER NOT NULL,
-            type TEXT NOT NULL,
-            name TEXT NOT NULL,
-            depth INTEGER NOT NULL,
-            start_row INTEGER NOT NULL,
-            start_column INTEGER NOT NULL,
-            end_row INTEGER NOT NULL,
-            end_column INTEGER NOT NULL,
-            signature TEXT NOT NULL,
-            languages TEXT NOT NULL DEFAULT '[]',
-            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_files_rel_path ON files(rel_path);
-        CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
-        CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id);
-        CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
-        """
-    )
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(project_state)").fetchall()}
-    if "languages" not in columns:
-        conn.execute("ALTER TABLE project_state ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+    ProjectRepository.init_project_schema(conn)
 
 
 def _ensure_project_schema(conn: sqlite3.Connection) -> None:
-    _init_project_schema(conn)
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(files)").fetchall()}
-    if "file_size" not in columns:
-        conn.execute("ALTER TABLE files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0")
-    if "file_mtime_ns" not in columns:
-        conn.execute("ALTER TABLE files ADD COLUMN file_mtime_ns INTEGER NOT NULL DEFAULT 0")
-    if "languages" not in columns:
-        conn.execute("ALTER TABLE files ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
-
-    symbol_columns = {row[1] for row in conn.execute("PRAGMA table_info(symbols)").fetchall()}
-    if "languages" not in symbol_columns:
-        conn.execute("ALTER TABLE symbols ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+    ProjectRepository.ensure_project_schema(conn)
 
 
 def _project_file_snapshot(path: Path) -> dict[str, int]:
@@ -215,93 +549,35 @@ def _normalize_project(project: str) -> str:
 
 
 def _row_to_project_dict(row: sqlite3.Row) -> dict[str, Any]:
-    return {
-        "name": row["name"],
-        "root_path": row["root_path"],
-        "db_path": row["db_path"],
-        "mode": row["mode"],
-        "description": row["description"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-        "indexed_at": row["indexed_at"],
-        "file_count": row["file_count"],
-        "supported_file_count": row["supported_file_count"],
-        "symbol_count": row["symbol_count"],
-        "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
-    }
+    return ProjectRowMapper.row_to_project_dict(row)
 
 
 def _row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
-    return {
-        "project": row["project_name"],
-        "root_path": row["root_path"],
-        "file_count": row["file_count"],
-        "supported_file_count": row["supported_file_count"],
-        "symbol_count": row["symbol_count"],
-        "indexed_at": row["indexed_at"],
-        "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
-    }
+    return ProjectRowMapper.row_to_summary(row)
 
 
 def _decode_languages(value: Any) -> list[str]:
-    if value in (None, ""):
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if str(item)]
-    if isinstance(value, str):
-        try:
-            raw = json.loads(value)
-        except json.JSONDecodeError:
-            return [value] if value else []
-        if isinstance(raw, list):
-            return [str(item) for item in raw if str(item)]
-    return []
+    return ProjectRowMapper.decode_languages(value)
 
 
 def _encode_languages(languages: list[str]) -> str:
-    return json.dumps(_merge_languages([str(language) for language in languages if str(language)]))
+    return ProjectRowMapper.encode_languages(languages)
 
 
 def _row_languages(row: sqlite3.Row) -> list[str]:
-    return _decode_languages(row["languages"])
+    return ProjectRowMapper.row_languages(row)
 
 
 def _merge_languages(*groups: list[str]) -> list[str]:
-    merged: list[str] = []
-    for group in groups:
-        for language in group:
-            if language and language not in merged:
-                merged.append(language)
-    return merged
+    return ProjectRowMapper.merge_languages(*groups)
 
 
 def _project_languages_from_conn(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute("SELECT languages FROM files ORDER BY id ASC").fetchall()
-    return _merge_languages(*[_decode_languages(row["languages"]) for row in rows])
+    return ProjectRowMapper.project_languages_from_conn(conn)
 
 
 def _symbol_rows(conn: sqlite3.Connection, file_id: int) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        """
-        SELECT symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature, languages
-        FROM symbols
-        WHERE file_id = ?
-        ORDER BY symbol_order ASC, id ASC
-        """,
-        (file_id,),
-    ).fetchall()
-    return [
-        {
-            "type": row["type"],
-            "name": row["name"],
-            "depth": row["depth"],
-            "start_point": {"row": row["start_row"], "column": row["start_column"]},
-            "end_point": {"row": row["end_row"], "column": row["end_column"]},
-            "signature": row["signature"],
-            "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
-        }
-        for row in rows
-    ]
+    return ProjectRowMapper.symbol_rows(conn, file_id)
 
 
 def _upsert_file_analysis(
@@ -381,49 +657,15 @@ def _upsert_file_analysis(
 
 
 def _load_project_metadata(project: str) -> dict[str, Any] | None:
-    if not METADATA_DB.exists():
-        return None
-    with _connect(METADATA_DB) as conn:
-        _init_metadata_schema(conn)
-        row = conn.execute("SELECT * FROM projects WHERE name = ?", (project,)).fetchone()
-        if row is None:
-            return None
-        return _row_to_project_dict(row)
+    return ProjectRepository.load_project_metadata(project)
 
 
 def list_projects() -> list[dict[str, Any]]:
-    if not METADATA_DB.exists():
-        return []
-    with _connect(METADATA_DB) as conn:
-        _init_metadata_schema(conn)
-        rows = conn.execute("SELECT * FROM projects ORDER BY name ASC").fetchall()
-        return [_row_to_project_dict(row) for row in rows]
+    return ProjectRepository.list_projects()
 
 
 def search_projects(query: str) -> list[dict[str, Any]]:
-    needle = query.strip()
-    if not needle:
-        return list_projects()
-
-    pattern = f"%{needle.lower()}%"
-    if not METADATA_DB.exists():
-        return []
-
-    with _connect(METADATA_DB) as conn:
-        _init_metadata_schema(conn)
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM projects
-            WHERE lower(name) LIKE ?
-               OR lower(root_path) LIKE ?
-               OR lower(mode) LIKE ?
-               OR lower(description) LIKE ?
-            ORDER BY name ASC
-            """,
-            (pattern, pattern, pattern, pattern),
-        ).fetchall()
-        return [_row_to_project_dict(row) for row in rows]
+    return ProjectRepository.search_projects(query)
 
 
 def get_project(project: str) -> dict[str, Any]:
@@ -792,30 +1034,7 @@ def sync_project_tree(project: str) -> dict[str, Any]:
 
 
 def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
-    row = conn.execute(
-        """
-        SELECT rel_path, abs_path, language, languages, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
-        FROM files
-        WHERE id = ?
-        """,
-        (file_id,),
-    ).fetchone()
-    if row is None:
-        raise ValueError("Indexed file record disappeared")
-    return {
-        "path": row["rel_path"],
-        "abs_path": row["abs_path"],
-        "language": row["language"],
-        "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
-        "root_type": row["root_type"],
-        "node_count": row["node_count"],
-        "has_error": bool(row["has_error"]),
-        "byte_length": row["byte_length"],
-        "file_size": row["file_size"],
-        "file_mtime_ns": row["file_mtime_ns"],
-        "skeleton": row["skeleton"],
-        "indexed_at": row["indexed_at"],
-    }
+    return ProjectRepository.read_file_record(conn, file_id)
 
 
 def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
