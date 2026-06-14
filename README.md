@@ -2,6 +2,20 @@
 
 Tree-sitter-powered MCP server for project-scoped structural code analysis.
 
+## Install
+
+```bash
+python scripts/install.py
+```
+
+The installer validates the local prerequisites before syncing dependencies:
+
+- Python 3.11 or newer
+- `uv`
+- `fswatch`
+
+It then runs `uv sync --all-extras --locked` and verifies that the core packages import cleanly.
+
 ## Core model
 
 This server now treats *projects* as the primary unit of work.
