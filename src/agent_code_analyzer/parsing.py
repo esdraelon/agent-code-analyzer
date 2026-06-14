@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -14,8 +15,11 @@ LANGUAGE_BY_EXTENSION: dict[str, str] = {
     "clj": "clojure",
     "cpp": "cpp",
     "cs": "c_sharp",
+    "css": "css",
     "go": "go",
     "h": "c",
+    "htm": "html",
+    "html": "html",
     "hpp": "cpp",
     "java": "java",
     "js": "javascript",
@@ -26,6 +30,7 @@ LANGUAGE_BY_EXTENSION: dict[str, str] = {
     "rb": "ruby",
     "rs": "rust",
     "sh": "bash",
+    "sql": "sql",
     "ts": "typescript",
     "tsx": "tsx",
     "yml": "yaml",
@@ -45,6 +50,10 @@ TARGET_NODE_TYPES = {
 }
 
 DEFAULT_MAX_SYMBOL_DEPTH = 6
+SQL_KEYWORDS_RE = re.compile(
+    r"\b(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP|REPLACE|MERGE)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,7 @@ class ParsedFile:
     source_bytes: bytes
     source_code: str
     tree: Any
+    languages: tuple[str, ...] = ()
 
 
 @lru_cache(maxsize=32)
@@ -80,6 +90,21 @@ def _read_source_text(source_path: Path) -> tuple[bytes, str]:
     return raw, _decode_source_bytes(raw)
 
 
+def parse_source_text(language_name: str, source_text: str, file_path: str = "<memory>") -> ParsedFile:
+    source_bytes = source_text.encode("utf-8")
+    parser = Parser()
+    parser.set_language(resolve_language(language_name))
+    tree = parser.parse(source_bytes)
+    return ParsedFile(
+        file_path=file_path,
+        language=language_name,
+        source_bytes=source_bytes,
+        source_code=source_text,
+        tree=tree,
+        languages=(language_name,),
+    )
+
+
 def parse_file(file_path: str) -> ParsedFile:
     language_name = detect_language(file_path)
     if not language_name:
@@ -87,7 +112,6 @@ def parse_file(file_path: str) -> ParsedFile:
 
     source_path = Path(file_path)
     source_bytes, source_code = _read_source_text(source_path)
-
     parser = Parser()
     parser.set_language(resolve_language(language_name))
     tree = parser.parse(source_bytes)
@@ -97,7 +121,26 @@ def parse_file(file_path: str) -> ParsedFile:
         source_bytes=source_bytes,
         source_code=source_code,
         tree=tree,
+        languages=(language_name,),
     )
+
+
+def _byte_offset_to_point(source_bytes: bytes, offset: int) -> tuple[int, int]:
+    prefix = source_bytes[:offset]
+    row = prefix.count(b"\n")
+    last_newline = prefix.rfind(b"\n")
+    if last_newline == -1:
+        column = offset
+    else:
+        column = offset - last_newline - 1
+    return row, column
+
+
+def _point_with_offset(point: tuple[int, int], row_offset: int, column_offset: int) -> dict[str, int]:
+    row, column = point
+    if row == 0:
+        return {"row": row_offset, "column": column_offset + column}
+    return {"row": row_offset + row, "column": column}
 
 
 def _node_signature(node: Any, source_bytes: bytes) -> str:
@@ -134,6 +177,106 @@ def _walk_tree(tree: Any) -> Iterator[tuple[Any, int]]:
                 break
             if cursor.goto_next_sibling():
                 break
+
+
+def _dedupe_languages(languages: list[str]) -> list[str]:
+    ordered: list[str] = []
+    for language in languages:
+        if language and language not in ordered:
+            ordered.append(language)
+    return ordered
+
+
+def _symbol_languages(base_language: str, signature: str, source_text: str) -> list[str]:
+    languages = [base_language]
+    if base_language in {"php", "javascript", "typescript", "tsx", "jsx", "python", "ruby", "go"}:
+        if SQL_KEYWORDS_RE.search(source_text) and "sql" not in languages:
+            languages.append("sql")
+    if base_language == "html":
+        if "<script" in source_text.lower() and "javascript" not in languages:
+            languages.append("javascript")
+        if "<style" in source_text.lower() and "css" not in languages:
+            languages.append("css")
+    return _dedupe_languages(languages)
+
+
+def _symbol_record(
+    node: Any,
+    *,
+    base_language: str,
+    source_bytes: bytes,
+    row_offset: int = 0,
+    column_offset: int = 0,
+) -> tuple[dict[str, Any], str]:
+    signature = _node_signature(node, source_bytes)
+    source_text = _decode_source_bytes(source_bytes[node.start_byte : node.end_byte])
+    start_point = _point_with_offset(node.start_point, row_offset, column_offset)
+    end_point = _point_with_offset(node.end_point, row_offset, column_offset)
+    languages = _symbol_languages(base_language, signature, source_text)
+    symbol = {
+        "type": node.type,
+        "name": _node_name(node),
+        "depth": 0,  # filled by caller
+        "start_point": start_point,
+        "end_point": end_point,
+        "signature": signature,
+        "languages": languages,
+    }
+    return symbol, signature
+
+
+def _collect_target_symbols(
+    parsed: ParsedFile,
+    *,
+    row_offset: int = 0,
+    column_offset: int = 0,
+    base_language: str | None = None,
+) -> tuple[list[str], list[dict[str, Any]], list[str]]:
+    skeleton_lines: list[str] = []
+    symbols: list[dict[str, Any]] = []
+    languages_seen: list[str] = []
+    effective_language = base_language or parsed.language
+
+    for node, depth in _walk_tree(parsed.tree):
+        if node.type not in TARGET_NODE_TYPES:
+            continue
+        symbol, signature = _symbol_record(
+            node,
+            base_language=effective_language,
+            source_bytes=parsed.source_bytes,
+            row_offset=row_offset,
+            column_offset=column_offset,
+        )
+        symbol["depth"] = depth
+        skeleton_lines.append(f"{'  ' * depth}[{node.type}] {signature}")
+        symbols.append(symbol)
+        languages_seen.extend(symbol["languages"])
+
+    return skeleton_lines, symbols, languages_seen
+
+
+def _iter_html_embedded_blocks(parsed: ParsedFile) -> Iterator[dict[str, Any]]:
+    if parsed.language != "html":
+        return
+
+    for pattern, language in (
+        (rb"<script\b[^>]*>(.*?)</script>", "javascript"),
+        (rb"<style\b[^>]*>(.*?)</style>", "css"),
+    ):
+        for match in re.finditer(pattern, parsed.source_bytes, flags=re.IGNORECASE | re.DOTALL):
+            content_start = match.start(1)
+            content_end = match.end(1)
+            block_source_bytes = parsed.source_bytes[content_start:content_end]
+            block_source_text = _decode_source_bytes(block_source_bytes)
+            start_row, start_column = _byte_offset_to_point(parsed.source_bytes, content_start)
+            end_row, end_column = _byte_offset_to_point(parsed.source_bytes, content_end)
+            yield {
+                "language": language,
+                "source_bytes": block_source_bytes,
+                "source_code": block_source_text,
+                "start_point": {"row": start_row, "column": start_column},
+                "end_point": {"row": end_row, "column": end_column},
+            }
 
 
 def _symbol_health_report(
@@ -191,35 +334,38 @@ def analyze_file(file_path: str) -> dict[str, Any]:
         raise ValueError(f"Unsupported file extension for Tree-sitter: {file_path}")
 
     parsed = parse_file(file_path)
-    skeleton_lines: list[str] = []
-    symbols: list[dict[str, object]] = []
+    skeleton_lines, symbols, languages_seen = _collect_target_symbols(parsed)
+    file_languages = [parsed.language]
 
-    for node, depth in _walk_tree(parsed.tree):
-        if node.type not in TARGET_NODE_TYPES:
-            continue
-        signature = _node_signature(node, parsed.source_bytes)
-        skeleton_lines.append(f"{'  ' * depth}[{node.type}] {signature}")
-        symbols.append(
-            {
-                "type": node.type,
-                "name": _node_name(node),
-                "depth": depth,
-                "start_point": {
-                    "row": node.start_point[0],
-                    "column": node.start_point[1],
-                },
-                "end_point": {
-                    "row": node.end_point[0],
-                    "column": node.end_point[1],
-                },
-                "signature": signature,
-            }
-        )
+    if parsed.language == "html":
+        for block in _iter_html_embedded_blocks(parsed):
+            fragment = parse_source_text(
+                block["language"],
+                block["source_code"],
+                file_path=f"{parsed.file_path}::{block['language']}"
+            )
+            fragment_skeleton, fragment_symbols, fragment_languages = _collect_target_symbols(
+                fragment,
+                row_offset=block["start_point"]["row"],
+                column_offset=block["start_point"]["column"],
+                base_language=block["language"],
+            )
+            skeleton_lines.extend(fragment_skeleton)
+            symbols.extend(fragment_symbols)
+            languages_seen.extend(fragment_languages)
+            file_languages.append(block["language"])
+
+    for symbol in symbols:
+        languages_seen.extend(symbol.get("languages", []))
+
+    file_languages.extend(languages_seen)
+    file_languages = _dedupe_languages(file_languages)
 
     return {
         "parsed": parsed,
         "skeleton": "\n".join(skeleton_lines),
         "symbols": symbols,
+        "languages": file_languages,
         "symbol_health": _symbol_health_report(
             symbols,
             has_error=bool(parsed.tree.root_node.has_error),
