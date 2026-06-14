@@ -49,6 +49,7 @@ TARGET_NODE_TYPES = {
 class ParsedFile:
     file_path: str
     language: str
+    source_bytes: bytes
     source_code: str
     tree: Any
 
@@ -63,8 +64,7 @@ def detect_language(file_path: str) -> str:
     return LANGUAGE_BY_EXTENSION.get(suffix, "")
 
 
-def _read_source_text(source_path: Path) -> str:
-    raw = source_path.read_bytes()
+def _decode_source_bytes(raw: bytes) -> str:
     for encoding in ("utf-8", "utf-8-sig", "latin-1"):
         try:
             return raw.decode(encoding)
@@ -73,39 +73,45 @@ def _read_source_text(source_path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _read_source_text(source_path: Path) -> tuple[bytes, str]:
+    raw = source_path.read_bytes()
+    return raw, _decode_source_bytes(raw)
+
+
 def parse_file(file_path: str) -> ParsedFile:
     language_name = detect_language(file_path)
     if not language_name:
         raise ValueError(f"Unsupported file extension for Tree-sitter: {file_path}")
 
     source_path = Path(file_path)
-    source_code = _read_source_text(source_path)
+    source_bytes, source_code = _read_source_text(source_path)
 
     parser = Parser()
     parser.set_language(resolve_language(language_name))
-    tree = parser.parse(source_code.encode("utf-8"))
+    tree = parser.parse(source_bytes)
     return ParsedFile(
         file_path=str(source_path),
         language=language_name,
+        source_bytes=source_bytes,
         source_code=source_code,
         tree=tree,
     )
 
 
-def _node_signature(node: Any, source_code: str) -> str:
+def _node_signature(node: Any, source_bytes: bytes) -> str:
     body = node.child_by_field_name("body")
     end = body.start_byte if body else node.end_byte
-    return source_code[node.start_byte:end].strip().replace("{", "").strip()
+    return _decode_source_bytes(source_bytes[node.start_byte:end]).strip().replace("{", "").strip()
 
 
 def _node_name(node: Any) -> str:
     name = node.child_by_field_name("name")
     if name is not None:
-        return name.text.decode("utf-8")
+        return _decode_source_bytes(name.text)
 
     for child in getattr(node, "named_children", []):
         if child.type in {"identifier", "type_identifier", "property_identifier"}:
-            return child.text.decode("utf-8")
+            return _decode_source_bytes(child.text)
 
     return ""
 
@@ -139,7 +145,7 @@ def analyze_file(file_path: str) -> dict[str, Any]:
     for node, depth in _walk_tree(parsed.tree):
         if node.type not in TARGET_NODE_TYPES:
             continue
-        signature = _node_signature(node, parsed.source_code)
+        signature = _node_signature(node, parsed.source_bytes)
         skeleton_lines.append(f"{'  ' * depth}[{node.type}] {signature}")
         symbols.append(
             {

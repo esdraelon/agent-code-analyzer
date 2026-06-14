@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 import runpy
 import warnings
+from typing import Any, cast
 
 import pytest
 
@@ -96,6 +97,27 @@ def test_parse_file_handles_non_utf8_source_bytes(tmp_path: Path) -> None:
 
     assert parsed.language == "php"
     assert "°" in parsed.source_code
+
+
+def test_analyze_file_preserves_symbol_offsets_after_unicode_prefix(tmp_path: Path) -> None:
+    source = tmp_path / "long_unicode.js"
+    filler = ["// filler" for _ in range(1200)]
+    body = [
+        "// — unicode before the symbol",
+        "if (true) {",
+        "  function hi() {",
+        "    return 1;",
+        "  }",
+        "}",
+    ]
+    source.write_text("\n".join(filler + body) + "\n", encoding="utf-8")
+
+    symbols = list_symbols(str(source))
+    symbol = cast(dict[str, Any], symbols[0])
+
+    assert symbol["name"] == "hi"
+    assert symbol["signature"] == "function hi()"
+    assert symbol["start_point"]["row"] >= 1200
 
 
 def test_project_registry_error_paths_and_missing_file_resolution(tmp_path: Path, monkeypatch) -> None:
