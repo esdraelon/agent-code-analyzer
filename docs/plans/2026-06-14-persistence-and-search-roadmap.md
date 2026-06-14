@@ -50,25 +50,22 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 1: Validate sub-file symbols for projects with poor structure hygiene
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Detect when a project’s file structure is too messy for reliable symbol extraction.
 
-**Planned shape:**
-- Add validation rules for class / method nesting and symbol sanity.
-- Flag malformed or suspicious symbol trees instead of silently treating them as healthy.
-- Separate “parsed successfully” from “structurally healthy.”
-
-**Possible validations:**
-- nested classes or methods beyond a configured depth
-- duplicate symbol names in the same scope
-- empty or truncated declarations
-- parse trees with significant error nodes
+**Implemented shape:**
+- Add deterministic symbol-health validation for Tree-sitter symbol lists.
+- Flag parse trees with error nodes.
+- Flag duplicate symbol names in the same symbol scope.
+- Flag symbol nesting that exceeds the configured depth threshold.
+- Return a structured health report alongside parsed symbols and skeletons.
 
 **Likely files:**
 - Modify: `src/agent_code_analyzer/parsing.py`
 - Modify: `src/agent_code_analyzer/projects.py`
-- Add: `tests/test_symbol_validation.py`
+- Modify: `src/agent_code_analyzer/server.py`
+- Add tests under `tests/`
 
 **Success criteria:**
 - Bad structure gets explicit warnings / flags.

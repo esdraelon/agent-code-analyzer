@@ -821,5 +821,6 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
         "byte_length": file_data["byte_length"],
         "skeleton": file_data["skeleton"],
         "symbols": symbols,
+        "symbol_health": analysis["symbol_health"],
         "indexed_at": file_data["indexed_at"],
     }
