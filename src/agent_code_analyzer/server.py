@@ -65,6 +65,7 @@ def parse_source(project: str, file_path: str) -> dict[str, object]:
             "file_path": file_path,
             "supported": False,
             "language": "",
+            "languages": [],
             "error": str(exc),
         }
 

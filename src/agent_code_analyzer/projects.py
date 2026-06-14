@@ -116,7 +116,8 @@ def _init_metadata_schema(conn: sqlite3.Connection) -> None:
             indexed_at TEXT,
             file_count INTEGER NOT NULL DEFAULT 0,
             supported_file_count INTEGER NOT NULL DEFAULT 0,
-            symbol_count INTEGER NOT NULL DEFAULT 0
+            symbol_count INTEGER NOT NULL DEFAULT 0,
+            languages TEXT NOT NULL DEFAULT '[]'
         );
 
         CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path);
@@ -124,6 +125,11 @@ def _init_metadata_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_projects_mode ON projects(mode);
         """
     )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    if "languages" not in columns:
+        conn.execute("ALTER TABLE projects ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+
+
 
 
 def _init_project_schema(conn: sqlite3.Connection) -> None:
@@ -137,7 +143,8 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
             indexed_at TEXT,
             file_count INTEGER NOT NULL DEFAULT 0,
             supported_file_count INTEGER NOT NULL DEFAULT 0,
-            symbol_count INTEGER NOT NULL DEFAULT 0
+            symbol_count INTEGER NOT NULL DEFAULT 0,
+            languages TEXT NOT NULL DEFAULT '[]'
         );
 
         CREATE TABLE IF NOT EXISTS files (
@@ -145,6 +152,7 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
             rel_path TEXT NOT NULL UNIQUE,
             abs_path TEXT NOT NULL,
             language TEXT NOT NULL,
+            languages TEXT NOT NULL DEFAULT '[]',
             root_type TEXT NOT NULL,
             node_count INTEGER NOT NULL,
             has_error INTEGER NOT NULL,
@@ -167,6 +175,7 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
             end_row INTEGER NOT NULL,
             end_column INTEGER NOT NULL,
             signature TEXT NOT NULL,
+            languages TEXT NOT NULL DEFAULT '[]',
             FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
         );
 
@@ -176,6 +185,9 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
         """
     )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(project_state)").fetchall()}
+    if "languages" not in columns:
+        conn.execute("ALTER TABLE project_state ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
 
 
 def _ensure_project_schema(conn: sqlite3.Connection) -> None:
@@ -185,6 +197,12 @@ def _ensure_project_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0")
     if "file_mtime_ns" not in columns:
         conn.execute("ALTER TABLE files ADD COLUMN file_mtime_ns INTEGER NOT NULL DEFAULT 0")
+    if "languages" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+
+    symbol_columns = {row[1] for row in conn.execute("PRAGMA table_info(symbols)").fetchall()}
+    if "languages" not in symbol_columns:
+        conn.execute("ALTER TABLE symbols ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
 
 
 def _project_file_snapshot(path: Path) -> dict[str, int]:
@@ -209,6 +227,7 @@ def _row_to_project_dict(row: sqlite3.Row) -> dict[str, Any]:
         "file_count": row["file_count"],
         "supported_file_count": row["supported_file_count"],
         "symbol_count": row["symbol_count"],
+        "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
     }
 
 
@@ -220,13 +239,51 @@ def _row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
         "supported_file_count": row["supported_file_count"],
         "symbol_count": row["symbol_count"],
         "indexed_at": row["indexed_at"],
+        "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
     }
+
+
+def _decode_languages(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    if isinstance(value, str):
+        try:
+            raw = json.loads(value)
+        except json.JSONDecodeError:
+            return [value] if value else []
+        if isinstance(raw, list):
+            return [str(item) for item in raw if str(item)]
+    return []
+
+
+def _encode_languages(languages: list[str]) -> str:
+    return json.dumps(_merge_languages([str(language) for language in languages if str(language)]))
+
+
+def _row_languages(row: sqlite3.Row) -> list[str]:
+    return _decode_languages(row["languages"])
+
+
+def _merge_languages(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for language in group:
+            if language and language not in merged:
+                merged.append(language)
+    return merged
+
+
+def _project_languages_from_conn(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute("SELECT languages FROM files ORDER BY id ASC").fetchall()
+    return _merge_languages(*[_decode_languages(row["languages"]) for row in rows])
 
 
 def _symbol_rows(conn: sqlite3.Connection, file_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature
+        SELECT symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature, languages
         FROM symbols
         WHERE file_id = ?
         ORDER BY symbol_order ASC, id ASC
@@ -241,6 +298,7 @@ def _symbol_rows(conn: sqlite3.Connection, file_id: int) -> list[dict[str, Any]]
             "start_point": {"row": row["start_row"], "column": row["start_column"]},
             "end_point": {"row": row["end_row"], "column": row["end_column"]},
             "signature": row["signature"],
+            "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
         }
         for row in rows
     ]
@@ -262,15 +320,17 @@ def _upsert_file_analysis(
     rel_path = str(resolved_path.relative_to(root_path))
     skeleton = analysis["skeleton"]
     byte_length = len(parsed.source_code.encode("utf-8"))
+    languages = _encode_languages(analysis.get("languages", [parsed.language]))
 
     conn.execute(
         """
         INSERT INTO files (
-            rel_path, abs_path, language, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rel_path, abs_path, language, languages, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(rel_path) DO UPDATE SET
             abs_path = excluded.abs_path,
             language = excluded.language,
+            languages = excluded.languages,
             root_type = excluded.root_type,
             node_count = excluded.node_count,
             has_error = excluded.has_error,
@@ -284,6 +344,7 @@ def _upsert_file_analysis(
             rel_path,
             str(resolved_path),
             parsed.language,
+            languages,
             root_node.type,
             root_node.descendant_count,
             int(root_node.has_error),
@@ -300,8 +361,8 @@ def _upsert_file_analysis(
         conn.execute(
             """
             INSERT INTO symbols (
-                file_id, symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                file_id, symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature, languages
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 file_id,
@@ -314,6 +375,7 @@ def _upsert_file_analysis(
                 symbol["end_point"]["row"],
                 symbol["end_point"]["column"],
                 symbol["signature"],
+                _encode_languages(symbol.get("languages", [parsed.language])),
             ),
         )
 
@@ -384,6 +446,7 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
 
     db_path = _project_db_path(project)
     now = _now()
+    project_languages: list[str] = []
 
     with _acquire_locks(METADATA_DB, db_path):
         with _connect(METADATA_DB) as conn:
@@ -394,12 +457,13 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
             file_count = int(existing["file_count"] if existing else 0)
             supported_file_count = int(existing["supported_file_count"] if existing else 0)
             symbol_count = int(existing["symbol_count"] if existing else 0)
+            languages = _encode_languages(_decode_languages(existing["languages"]) if existing and "languages" in existing.keys() else [])
             conn.execute(
                 """
                 INSERT INTO projects (
                     name, root_path, db_path, mode, description, created_at, updated_at,
-                    indexed_at, file_count, supported_file_count, symbol_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    indexed_at, file_count, supported_file_count, symbol_count, languages
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     root_path = excluded.root_path,
                     db_path = excluded.db_path,
@@ -409,7 +473,8 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
                     indexed_at = COALESCE(projects.indexed_at, excluded.indexed_at),
                     file_count = excluded.file_count,
                     supported_file_count = excluded.supported_file_count,
-                    symbol_count = excluded.symbol_count
+                    symbol_count = excluded.symbol_count,
+                    languages = excluded.languages
                 """,
                 (
                     project,
@@ -423,6 +488,7 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
                     file_count,
                     supported_file_count,
                     symbol_count,
+                    languages,
                 ),
             )
 
@@ -432,13 +498,14 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
                 """
                 INSERT INTO project_state (
                     project_name, root_path, created_at, updated_at, indexed_at,
-                    file_count, supported_file_count, symbol_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    file_count, supported_file_count, symbol_count, languages
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_name) DO UPDATE SET
                     root_path = excluded.root_path,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    languages = excluded.languages
                 """,
-                (project, str(root), created_at, now, indexed_at, file_count, supported_file_count, symbol_count),
+                (project, str(root), created_at, now, indexed_at, file_count, supported_file_count, symbol_count, languages),
             )
 
     result = get_project(project)
@@ -491,7 +558,7 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
             _ensure_project_schema(conn)
             row = conn.execute(
                 """
-                SELECT project_name, root_path, file_count, supported_file_count, symbol_count, indexed_at
+                SELECT project_name, root_path, file_count, supported_file_count, symbol_count, indexed_at, languages
                 FROM project_state
                 WHERE project_name = ?
                 """,
@@ -527,19 +594,21 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
                 (project,),
             ).fetchone()
             created_at = existing_state["created_at"] if existing_state else indexed_at
+            project_languages = _project_languages_from_conn(conn)
             conn.execute(
                 """
                 INSERT INTO project_state (
                     project_name, root_path, created_at, updated_at, indexed_at,
-                    file_count, supported_file_count, symbol_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    file_count, supported_file_count, symbol_count, languages
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_name) DO UPDATE SET
                     root_path = excluded.root_path,
                     updated_at = excluded.updated_at,
                     indexed_at = excluded.indexed_at,
                     file_count = excluded.file_count,
                     supported_file_count = excluded.supported_file_count,
-                    symbol_count = excluded.symbol_count
+                    symbol_count = excluded.symbol_count,
+                    languages = excluded.languages
                 """,
                 (
                     project,
@@ -550,6 +619,7 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
                     len(files),
                     len(files),
                     total_symbols,
+                    _encode_languages(project_languages),
                 ),
             )
 
@@ -559,10 +629,10 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
             conn.execute(
                 """
                 UPDATE projects
-                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?
+                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?, languages = ?
                 WHERE name = ?
                 """,
-                (indexed_at, indexed_at, len(files), len(files), total_symbols, project),
+                (indexed_at, indexed_at, len(files), len(files), total_symbols, _encode_languages(project_languages), project),
             )
 
     return {
@@ -573,6 +643,7 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
         "supported_file_count": len(files),
         "symbol_count": total_symbols,
         "indexed_at": indexed_at,
+        "languages": project_languages,
     }
 
 
@@ -587,7 +658,7 @@ def sync_project_tree(project: str) -> dict[str, Any]:
             _ensure_project_schema(conn)
             existing_state = conn.execute(
                 """
-                SELECT project_name, root_path, created_at, updated_at, indexed_at, file_count, supported_file_count, symbol_count
+                SELECT project_name, root_path, created_at, updated_at, indexed_at, file_count, supported_file_count, symbol_count, languages
                 FROM project_state
                 WHERE project_name = ?
                 """,
@@ -664,19 +735,21 @@ def sync_project_tree(project: str) -> dict[str, Any]:
             symbol_count = int(conn.execute("SELECT COUNT(*) AS count FROM symbols").fetchone()["count"])
             indexed_at = now
             created_at = existing_state["created_at"] if existing_state else now
+            project_languages = _project_languages_from_conn(conn)
             conn.execute(
                 """
                 INSERT INTO project_state (
                     project_name, root_path, created_at, updated_at, indexed_at,
-                    file_count, supported_file_count, symbol_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    file_count, supported_file_count, symbol_count, languages
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_name) DO UPDATE SET
                     root_path = excluded.root_path,
                     updated_at = excluded.updated_at,
                     indexed_at = excluded.indexed_at,
                     file_count = excluded.file_count,
                     supported_file_count = excluded.supported_file_count,
-                    symbol_count = excluded.symbol_count
+                    symbol_count = excluded.symbol_count,
+                    languages = excluded.languages
                 """,
                 (
                     project,
@@ -687,6 +760,7 @@ def sync_project_tree(project: str) -> dict[str, Any]:
                     file_count,
                     file_count,
                     symbol_count,
+                    _encode_languages(project_languages),
                 ),
             )
 
@@ -696,10 +770,10 @@ def sync_project_tree(project: str) -> dict[str, Any]:
             conn.execute(
                 """
                 UPDATE projects
-                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?
+                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?, languages = ?
                 WHERE name = ?
                 """,
-                (indexed_at, indexed_at, file_count, file_count, symbol_count, project),
+                (indexed_at, indexed_at, file_count, file_count, symbol_count, _encode_languages(project_languages), project),
             )
 
     return {
@@ -710,6 +784,7 @@ def sync_project_tree(project: str) -> dict[str, Any]:
         "supported_file_count": file_count,
         "symbol_count": symbol_count,
         "indexed_at": indexed_at,
+        "languages": project_languages,
         "changed_file_count": len(upserted_paths),
         "deleted_file_count": deleted_file_count,
         "unchanged_file_count": len(unchanged_paths),
@@ -719,7 +794,7 @@ def sync_project_tree(project: str) -> dict[str, Any]:
 def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
     row = conn.execute(
         """
-        SELECT rel_path, abs_path, language, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
+        SELECT rel_path, abs_path, language, languages, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
         FROM files
         WHERE id = ?
         """,
@@ -731,6 +806,7 @@ def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
         "path": row["rel_path"],
         "abs_path": row["abs_path"],
         "language": row["language"],
+        "languages": _decode_languages(row["languages"] if "languages" in row.keys() else "[]"),
         "root_type": row["root_type"],
         "node_count": row["node_count"],
         "has_error": bool(row["has_error"]),
@@ -772,19 +848,21 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
             symbols = _symbol_rows(conn, file_id)
             file_count = conn.execute("SELECT COUNT(*) AS count FROM files").fetchone()["count"]
             symbol_count = conn.execute("SELECT COUNT(*) AS count FROM symbols").fetchone()["count"]
+            project_languages = _project_languages_from_conn(conn)
             conn.execute(
                 """
                 INSERT INTO project_state (
                     project_name, root_path, created_at, updated_at, indexed_at,
-                    file_count, supported_file_count, symbol_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    file_count, supported_file_count, symbol_count, languages
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_name) DO UPDATE SET
                     root_path = excluded.root_path,
                     updated_at = excluded.updated_at,
                     indexed_at = excluded.indexed_at,
                     file_count = excluded.file_count,
                     supported_file_count = excluded.supported_file_count,
-                    symbol_count = excluded.symbol_count
+                    symbol_count = excluded.symbol_count,
+                    languages = excluded.languages
                 """,
                 (
                     project,
@@ -795,6 +873,7 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
                     int(file_count),
                     int(file_count),
                     int(symbol_count),
+                    _encode_languages(project_languages),
                 ),
             )
 
@@ -804,10 +883,10 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
             conn.execute(
                 """
                 UPDATE projects
-                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?
+                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?, languages = ?
                 WHERE name = ?
                 """,
-                (indexed_at, indexed_at, int(file_count), int(file_count), int(symbol_count), project),
+                (indexed_at, indexed_at, int(file_count), int(file_count), int(symbol_count), _encode_languages(project_languages), project),
             )
 
     return {
@@ -815,6 +894,7 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
         "file_path": file_data["path"],
         "supported": True,
         "language": file_data["language"],
+        "languages": file_data["languages"],
         "root_type": file_data["root_type"],
         "node_count": file_data["node_count"],
         "has_error": file_data["has_error"],
