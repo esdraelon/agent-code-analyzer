@@ -58,3 +58,16 @@ def test_install_runs_uv_sync_and_import_check(monkeypatch) -> None:
         "-c",
         "import agent_code_analyzer, mcp, tree_sitter, tree_sitter_languages",
     ]
+
+
+def test_install_runner_exposes_default_requirements() -> None:
+    module = load_install_module()
+    runner = module.InstallRunner()
+
+    assert runner.config.required_commands == ("uv", "fswatch")
+    assert runner.config.required_modules == (
+        "agent_code_analyzer",
+        "mcp",
+        "tree_sitter",
+        "tree_sitter_languages",
+    )

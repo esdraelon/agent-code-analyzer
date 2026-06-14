@@ -59,6 +59,62 @@ class DirtyProjectQueue:
         return time.monotonic() if now is None else now
 
 
+@dataclass(frozen=True)
+class WatchProjectRouter:
+    """Project-to-path routing and command construction for the watcher facade."""
+
+    def project_roots(self, projects: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        roots: list[tuple[str, str]] = []
+        for project in projects:
+            root = str(Path(project["root_path"]).resolve())
+            roots.append((project["name"], root))
+        return roots
+
+    def build_fswatch_command(self, fswatch_command: str, projects: list[dict[str, Any]]) -> list[str]:
+        roots = self.project_roots(projects)
+        return [fswatch_command, "-r", "--format=%p", *[root for _, root in roots]]
+
+    def project_for_path(self, projects: list[dict[str, Any]], event_path: str) -> dict[str, Any] | None:
+        candidate = Path(event_path.strip()).resolve()
+        candidate_text = str(candidate)
+        best_project: dict[str, Any] | None = None
+        best_root_length = -1
+        for project in projects:
+            root = str(Path(project["root_path"]).resolve())
+            if candidate_text == root or candidate_text.startswith(root + os.sep):
+                if len(root) > best_root_length:
+                    best_project = project
+                    best_root_length = len(root)
+        return best_project
+
+
+@dataclass(frozen=True)
+class WatchProcessManager:
+    """Process lifecycle helper for the fswatch subprocess."""
+
+    def launch(self, command: list[str]) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+    def terminate(self, process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=2.0)
+        except Exception:
+            try:
+                process.kill()
+                process.wait(timeout=2.0)
+            except Exception:
+                pass
+
+
 @dataclass
 class ProjectWatcherService:
     """Background fswatch-driven watcher that keeps configured projects in sync."""
@@ -78,9 +134,13 @@ class ProjectWatcherService:
     _last_results: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _last_sweep_at: float = field(default=0.0, init=False, repr=False)
     _dirty_queue: DirtyProjectQueue = field(init=False, repr=False)
+    _project_router: WatchProjectRouter = field(init=False, repr=False)
+    _process_manager: WatchProcessManager = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._dirty_queue = DirtyProjectQueue(debounce_seconds=self.debounce_seconds)
+        self._project_router = WatchProjectRouter()
+        self._process_manager = WatchProcessManager()
 
     def start(self) -> "ProjectWatcherService":
         if self._watch_thread is not None and self._watch_thread.is_alive():
@@ -188,32 +248,17 @@ class ProjectWatcherService:
             )
 
     def _project_roots(self, projects: list[dict[str, Any]]) -> list[tuple[str, str]]:
-        roots: list[tuple[str, str]] = []
-        for project in projects:
-            root = str(Path(project["root_path"]).resolve())
-            roots.append((project["name"], root))
-        return roots
+        return self._project_router.project_roots(projects)
 
     def _build_fswatch_command(self, projects: list[dict[str, Any]]) -> list[str]:
-        roots = self._project_roots(projects)
-        return [self.fswatch_command, "-r", "--format=%p", *[root for _, root in roots]]
+        return self._project_router.build_fswatch_command(self.fswatch_command, projects)
 
     def _project_for_path(
         self,
         projects: list[dict[str, Any]],
         event_path: str,
     ) -> dict[str, Any] | None:
-        candidate = Path(event_path.strip()).resolve()
-        candidate_text = str(candidate)
-        best_project: dict[str, Any] | None = None
-        best_root_length = -1
-        for project in projects:
-            root = str(Path(project["root_path"]).resolve())
-            if candidate_text == root or candidate_text.startswith(root + os.sep):
-                if len(root) > best_root_length:
-                    best_project = project
-                    best_root_length = len(root)
-        return best_project
+        return self._project_router.project_for_path(projects, event_path)
 
     def _record_result(self, result: dict[str, Any]) -> None:
         if result.get("changed_file_count") or result.get("deleted_file_count"):
@@ -225,13 +270,7 @@ class ProjectWatcherService:
             return
 
         command = self._build_fswatch_command(projects)
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
+        process = self._process_manager.launch(command)
         self._process = process
         try:
             stdout = process.stdout
@@ -262,14 +301,4 @@ class ProjectWatcherService:
             self.run_safety_sweep(now=self.clock())
 
     def _terminate_process(self, process: subprocess.Popen[str]) -> None:
-        if process.poll() is not None:
-            return
-        try:
-            process.terminate()
-            process.wait(timeout=2.0)
-        except Exception:
-            try:
-                process.kill()
-                process.wait(timeout=2.0)
-            except Exception:
-                pass
+        self._process_manager.terminate(process)

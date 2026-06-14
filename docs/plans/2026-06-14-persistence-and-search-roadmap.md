@@ -74,7 +74,37 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 2: Add caching
+### Milestone 2: Refactor core modules around explicit design patterns
+
+**Status:** current
+
+**Objective:** Break the largest implementation files into clearer collaborators before adding more features, so the persistence, parsing, and watcher layers remain maintainable.
+
+**Planned shape:**
+- Refactor `projects.py` around a repository + mapper split.
+- Refactor `parsing.py` around parsing strategy helpers for base language and embedded-language handling.
+- Refactor `watcher.py` around a thin facade plus queue/process collaborators.
+- Keep the public MCP surface and current tests stable during the refactor.
+
+**Likely files:**
+- Modify: `src/agent_code_analyzer/projects.py`
+- Modify: `src/agent_code_analyzer/parsing.py`
+- Modify: `src/agent_code_analyzer/watcher.py`
+- Modify: `tests/test_smoke.py`
+- Modify: `tests/test_projects_sqlite.py`
+- Modify: `tests/test_coverage_gaps.py`
+- Modify: `tests/test_language_attribution.py`
+- Modify: `tests/test_symbol_validation.py`
+- Modify: `tests/test_watcher.py`
+
+**Success criteria:**
+- Each implementation area has a clearer pattern boundary.
+- Refactoring does not change the MCP API or the project persistence semantics.
+- The related test suite still passes after the split.
+
+---
+
+### Milestone 3: Add caching
 
 **Status:** planned
 
@@ -97,7 +127,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 3: Select a vector database
+### Milestone 4: Select a vector database
 
 **Status:** planned
 

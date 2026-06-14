@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -22,6 +24,50 @@ mcp = FastMCP(
         "All code-analysis calls are project-scoped."
     ),
 )
+
+
+@dataclass(frozen=True)
+class ToolResponseFactory:
+    """Normalize the MCP tool fallback payloads in one place."""
+
+    @staticmethod
+    def parse_source_error(project: str, file_path: str, error: Exception) -> dict[str, object]:
+        return {
+            "project": project,
+            "file_path": file_path,
+            "supported": False,
+            "language": "",
+            "languages": [],
+            "error": str(error),
+        }
+
+    @staticmethod
+    def empty_symbol_list() -> str:
+        return "[]"
+
+    @staticmethod
+    def empty_language() -> str:
+        return ""
+
+
+@dataclass(frozen=True)
+class FileExcerptRenderer:
+    """Render bounded file excerpts with normalized line numbers."""
+
+    def render(self, path: Path, start_line: int = 1, end_line: int = 200) -> str:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if start_line < 1:
+            start_line = 1
+        if end_line < start_line:
+            return ""
+        start = start_line - 1
+        end = min(end_line, len(lines))
+        excerpt = lines[start:end]
+        return "\n".join(f"{i}: {line}" for i, line in enumerate(excerpt, start=start_line))
+
+
+TOOL_RESPONSES = ToolResponseFactory()
+EXCERPT_RENDERER = FileExcerptRenderer()
 
 
 @mcp.tool()
@@ -60,14 +106,7 @@ def parse_source(project: str, file_path: str) -> dict[str, object]:
     try:
         return project_file_summary(project, file_path)
     except ValueError as exc:
-        return {
-            "project": project,
-            "file_path": file_path,
-            "supported": False,
-            "language": "",
-            "languages": [],
-            "error": str(exc),
-        }
+        return TOOL_RESPONSES.parse_source_error(project, file_path, exc)
 
 
 @mcp.tool()
@@ -86,7 +125,7 @@ def list_code_symbols(project: str, file_path: str) -> str:
         symbols = project_file_summary(project, file_path)["symbols"]
         return json.dumps(symbols, indent=2, ensure_ascii=False)
     except ValueError:
-        return "[]"
+        return TOOL_RESPONSES.empty_symbol_list()
 
 
 @mcp.tool()
@@ -95,7 +134,7 @@ def detect_source_language(project: str, file_path: str) -> str:
     try:
         return project_file_summary(project, file_path)["language"]
     except ValueError:
-        return ""
+        return TOOL_RESPONSES.empty_language()
 
 
 @mcp.tool()
@@ -107,15 +146,7 @@ def read_file_excerpt(
 ) -> str:
     """Read a bounded line range from a project file for debugging and review."""
     path = resolve_project_path(project, file_path)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if start_line < 1:
-        start_line = 1
-    if end_line < start_line:
-        return ""
-    start = start_line - 1
-    end = min(end_line, len(lines))
-    excerpt = lines[start:end]
-    return "\n".join(f"{i}: {line}" for i, line in enumerate(excerpt, start=start_line))
+    return EXCERPT_RENDERER.render(path, start_line=start_line, end_line=end_line)
 
 
 def main() -> None:
