@@ -144,7 +144,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 4: Select a vector database
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Choose the best vector store for semantic code search.
 
@@ -159,7 +159,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Qdrant
 
 **Outcome:**
-- Pick one vector DB and document why it beats the alternatives for this repo.
+- Qdrant chosen for the first implementation because it is easy to run locally with Docker, supports payload filters for project scoping, and keeps the semantic layer separate from sqlite’s structural source of truth.
 
 **Likely files:**
 - Create: `docs/decisions/vector-db.md`
@@ -168,19 +168,24 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 **Success criteria:**
 - Decision recorded with trade-offs and a clear default choice.
 
+**Validation note:**
+- Local Qdrant startup is wired into the install path via Docker Compose.
+- Dependency validation now includes `qdrant-client`.
+
 ---
 
 ### Milestone 4: Project-scoped code ingestion in the vector database
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Enable semantic retrieval over project code, not just structural lookup.
 
-**Planned shape:**
+**Implemented shape:**
 - Ingest project files into the vector DB with project id metadata.
-- Store chunk text, path, symbol context, and language metadata.
+- Store chunk text, file path, symbol context, and language metadata.
 - Keep vector ingestion project-scoped so searches never cross project boundaries accidentally.
 - Use sqlite as the structural source of truth while vector DB handles semantic search.
+- Expose an MCP `semantic_search` tool for code-chunk lookup.
 
 **Likely files:**
 - Create: `src/agent_code_analyzer/vector_index.py`
@@ -193,11 +198,14 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Reindexing preserves project scoping and metadata filters.
 - Vector ingestion is repeatable and testable.
 
+**Validation note:**
+- `uv run pytest -q` currently passes with the vector index and semantic search slices in place.
+
 ---
 
 ### Milestone 5: Decide whether vector DB supplements or replaces some sqlite responsibilities
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Avoid unnecessary duplication and keep the system maintainable.
 
@@ -214,6 +222,9 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 **Recommended default direction:**
 - sqlite remains the authoritative registry and structural index.
 - vector DB supplements it for semantic search rather than replacing it immediately.
+
+**Outcome:**
+- That ownership split is now implemented: sqlite remains authoritative, and Qdrant is a best-effort semantic projection with project-scoped payload filters.
 
 **Success criteria:**
 - Clear ownership of metadata, structure, and semantic vectors.
