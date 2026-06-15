@@ -18,12 +18,17 @@ from .projects import (
 from .watcher import ProjectWatcherService
 from .vector_index import bootstrap_existing_projects, get_vector_index
 
+SERVER_INSTRUCTIONS = (
+    "Tree-sitter-backed MCP for code-first analysis, symbol navigation, and line-accurate verification. "
+    "Use this server whenever the user asks about source structure, definitions, references, ownership boundaries, or refactor impact. "
+    "Prefer project-scoped tools such as parse_source, generate_ast_skeleton, list_code_symbols, detect_source_language, and read_file_excerpt before guessing from raw text. "
+    "When the question is about code, inspect the project first and answer with file paths, symbols, and line ranges when available. "
+    "All analysis calls are project-scoped."
+)
+
 mcp = FastMCP(
     name="agent-code-analyzer",
-    instructions=(
-        "Parse source files with Tree-sitter and return structural summaries. "
-        "All code-analysis calls are project-scoped."
-    ),
+    instructions=SERVER_INSTRUCTIONS,
 )
 
 
