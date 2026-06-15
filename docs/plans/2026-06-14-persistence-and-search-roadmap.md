@@ -110,14 +110,14 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 3: Add caching
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Reduce repeated parse cost for hot files and repeated requests.
 
-**Planned shape:**
-- Cache parsed analysis by file hash and/or mtime+size.
-- Cache per-project summaries separately from per-file results.
-- Ensure cache invalidation is deterministic when source changes.
+**Implemented shape:**
+- Reuse per-file snapshots keyed by `file_size` and `file_mtime_ns` to skip reparsing unchanged files.
+- Preserve per-project summary rows and only rewrite them when file content or membership changes.
+- Keep cache invalidation deterministic by falling back to a full reparse when the file snapshot changes.
 
 **Likely files:**
 - Modify: `src/agent_code_analyzer/projects.py`
@@ -128,6 +128,11 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Repeated reads of unchanged files avoid reparsing.
 - Cache invalidates correctly on content change.
 - Cached lookups do not hold sqlite connections open longer than necessary.
+
+**Validation note:**
+- Current implementation already has a no-op sync path covered by tests, including unchanged-file reuse and refresh behavior.
+- Coverage run: `PYTHONPATH=/home/hal9k/host-tools/agent-code-analyzer/src python3 -m pytest --cov=agent_code_analyzer --cov-report=term-missing -q`
+- Result: `35 passed`, `92%` overall coverage.
 
 ---
 
@@ -334,6 +339,32 @@ Mutation testing is the most environment-sensitive milestone here. It depends on
 - At least one mutation-testing tool is selected and documented.
 - The repo can run a mutation pass in a repeatable way.
 - The result is actionable, not just a vanity score.
+
+---
+
+### Milestone 10: Cache review and tuning at the end
+
+**Status:** planned
+
+**Objective:** Revisit the caching implementation after the rest of the roadmap settles, confirm the current first-pass cache still matches the intended behavior, and tune it only if later milestones expose a better ownership model.
+
+**Review questions:**
+- Is file-snapshot caching still the right invalidation boundary?
+- Should parsed-analysis caching be split from project-summary caching later?
+- Are there new code paths that bypass the cache and need tests?
+- Did any later milestone change the source-of-truth contract for sqlite rows?
+
+**Likely files:**
+- Review: `src/agent_code_analyzer/projects.py`
+- Review: `src/agent_code_analyzer/project_service.py`
+- Review: `src/agent_code_analyzer/parsing.py`
+- Review: `tests/test_projects_sqlite.py`
+- Review: `tests/test_coverage_gaps.py`
+
+**Success criteria:**
+- The cache implementation is re-validated after the surrounding milestones settle.
+- Any needed tuning is documented and covered by tests.
+- No stale caching assumptions survive into the final milestone set.
 
 ---
 
