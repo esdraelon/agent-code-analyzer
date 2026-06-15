@@ -27,6 +27,11 @@ Use this file to track ORK3 benchmark responses during development of the agent-
 - Intent summary: what a component is for
 - Response shape: whether the default answer stays compact and expandable
 
+## Operational note
+
+- Cold start can be a recurring issue during development runs and should be treated primarily as a development concern, not a production concern.
+- Always include proof-of-life preflight checks before judging retrieval or integration behavior.
+
 ## Log
 
 ### 2026-06-15
