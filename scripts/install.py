@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Callable
 
 REQUIRED_PYTHON = (3, 11)
-REQUIRED_COMMANDS = ("uv", "fswatch")
+REQUIRED_COMMANDS = ("uv", "fswatch", "docker")
 REQUIRED_MODULES = (
     "agent_code_analyzer",
     "mcp",
     "tree_sitter",
     "tree_sitter_languages",
+    "qdrant_client",
 )
 
 
@@ -73,12 +74,20 @@ class InstallRunner:
         import_check = "import " + ", ".join(self.config.required_modules)
         return [uv, "run", "python", "-c", import_check]
 
+    def build_qdrant_compose_command(self) -> list[str]:
+        docker = self.command_resolver("docker") or "docker"
+        compose_file = self.root_resolver() / "docker" / "qdrant-compose.yml"
+        return [docker, "compose", "-f", str(compose_file), "up", "-d"]
+
     def install(self) -> None:
         self.validate_requirements()
         root = self.root_resolver()
 
         print("[install] syncing dependencies with uv")
         _run(self.build_sync_command(), cwd=root, command_runner=self.command_runner)
+
+        print("[install] ensuring Qdrant is running locally")
+        _run(self.build_qdrant_compose_command(), cwd=root, command_runner=self.command_runner)
 
         print("[install] verifying package imports")
         _run(self.build_import_check_command(), cwd=root, command_runner=self.command_runner)

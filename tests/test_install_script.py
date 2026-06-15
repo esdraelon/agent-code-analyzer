@@ -20,7 +20,7 @@ def load_install_module():
 
 def test_validate_requirements_requires_fswatch(monkeypatch) -> None:
     module = load_install_module()
-    monkeypatch.setattr(module.shutil, "which", lambda command: "/usr/bin/uv" if command == "uv" else None)
+    monkeypatch.setattr(module.shutil, "which", lambda command: "/usr/bin/uv" if command in {"uv", "docker"} else None)
 
     with pytest.raises(RuntimeError, match="fswatch"):
         module.validate_requirements()
@@ -52,11 +52,19 @@ def test_install_runs_uv_sync_and_import_check(monkeypatch) -> None:
 
     assert commands[0][:3] == ["/usr/bin/uv", "sync", "--all-extras"]
     assert commands[1] == [
+        "/usr/bin/docker",
+        "compose",
+        "-f",
+        str(SCRIPT_PATH.parents[1] / "docker" / "qdrant-compose.yml"),
+        "up",
+        "-d",
+    ]
+    assert commands[2] == [
         "/usr/bin/uv",
         "run",
         "python",
         "-c",
-        "import agent_code_analyzer, mcp, tree_sitter, tree_sitter_languages",
+        "import agent_code_analyzer, mcp, tree_sitter, tree_sitter_languages, qdrant_client",
     ]
 
 
@@ -64,10 +72,11 @@ def test_install_runner_exposes_default_requirements() -> None:
     module = load_install_module()
     runner = module.InstallRunner()
 
-    assert runner.config.required_commands == ("uv", "fswatch")
+    assert runner.config.required_commands == ("uv", "fswatch", "docker")
     assert runner.config.required_modules == (
         "agent_code_analyzer",
         "mcp",
         "tree_sitter",
         "tree_sitter_languages",
+        "qdrant_client",
     )

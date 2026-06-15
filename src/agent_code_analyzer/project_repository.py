@@ -226,4 +226,6 @@ class ProjectRepository:
         ).fetchone()
         if row is None:
             raise ValueError("Indexed file record disappeared")
-        return ProjectRowMapper.file_record(row)
+        record = ProjectRowMapper.file_record(row)
+        record["sqlite_file_id"] = file_id
+        return record
