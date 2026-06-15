@@ -76,15 +76,15 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 2: Refactor core modules around explicit design patterns
 
-**Status:** current
+**Status:** complete
 
 **Objective:** Break the largest implementation files into clearer collaborators before adding more features, so the persistence, parsing, and watcher layers remain maintainable.
 
-**Planned shape:**
-- Refactor `projects.py` around a repository + mapper split.
-- Refactor `parsing.py` around parsing strategy helpers for base language and embedded-language handling.
-- Refactor `watcher.py` around a thin facade plus queue/process collaborators.
-- Keep the public MCP surface and current tests stable during the refactor.
+**Implemented shape:**
+- `projects.py` now delegates to repository / mapper / storage / service helpers.
+- `parsing.py` now uses explicit source parsing and symbol-attribution strategies.
+- `watcher.py` now separates queueing, project routing, and process supervision behind small collaborators.
+- The public MCP surface and existing tests remained stable during the refactor.
 
 **Likely files:**
 - Modify: `src/agent_code_analyzer/projects.py`
@@ -101,6 +101,10 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Each implementation area has a clearer pattern boundary.
 - Refactoring does not change the MCP API or the project persistence semantics.
 - The related test suite still passes after the split.
+
+**Validation note:**
+- Coverage run: `PYTHONPATH=/home/hal9k/host-tools/agent-code-analyzer/src python3 -m pytest --cov=agent_code_analyzer --cov-report=term-missing -q`
+- Result: `35 passed`, `92%` overall coverage.
 
 ---
 
