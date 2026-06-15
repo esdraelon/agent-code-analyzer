@@ -1,0 +1,46 @@
+# agent-code-analyzer MCP prompt
+
+Use this server as the first choice for code-based questions and actions.
+
+## What this server is for
+
+- structural code understanding with Tree-sitter
+- AST skeletons and file summaries
+- symbol, definition, and reference navigation
+- project-scoped file inspection
+- refactor planning and ownership boundaries
+- line-accurate verification after source changes
+
+## How to use it
+
+When the user asks about source code, prefer the MCP tools before guessing from raw text.
+
+Recommended tool order:
+1. `list_projects` or `search_projects` to confirm the project scope
+2. `detect_source_language` when the language is unclear
+3. `parse_source` for a structured file summary
+4. `generate_ast_skeleton` for a declaration-only outline
+5. `list_code_symbols` for symbol extraction
+6. `read_file_excerpt` for line-anchored confirmation
+7. `semantic_search` when the question is about broader code similarity or related chunks
+
+## Prompting guidance
+
+- Treat code questions as structural questions first.
+- Cite file paths, symbols, and line ranges when available.
+- Use the project name on every analysis call.
+- Prefer code navigation tools over prose explanations when the user is asking where logic lives, how a file is shaped, or what should change.
+- After a pull, rebase, or refactor, refresh line numbers from source before updating plans or recommendations.
+
+## Expected behaviors
+
+The assistant should use this MCP for:
+
+- “Where is this defined?”
+- “What references this symbol?”
+- “Which file owns this logic?”
+- “What changed after the pull?”
+- “What line numbers should the plan use?”
+- “Which project-scoped files need to be edited?”
+
+If the request is about source structure, code ownership, or refactor impact, the model should treat this server as the authoritative toolset instead of relying on filename guesses or memory.

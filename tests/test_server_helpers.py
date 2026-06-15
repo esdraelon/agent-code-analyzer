@@ -5,6 +5,16 @@ from pathlib import Path
 from agent_code_analyzer import server
 
 
+def test_server_instructions_promote_code_first_workflows() -> None:
+    instructions = server.SERVER_INSTRUCTIONS
+    assert "code-first analysis" in instructions
+    assert "parse_source" in instructions
+    assert "generate_ast_skeleton" in instructions
+    assert "list_code_symbols" in instructions
+    assert "read_file_excerpt" in instructions
+    assert "project-scoped" in instructions
+
+
 def test_tool_response_factory_shapes_fallback_payloads() -> None:
     factory = server.ToolResponseFactory()
 
