@@ -267,7 +267,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 8: Add full-codebase embedding search and intent analysis
 
-**Status:** planned
+**Status:** in progress
 
 **Objective:** Replace the current best-effort vector projection with a real embedding-backed search layer that continuously reindexes the entire codebase on file changes, and add agent-driven intent analysis for each component so the analyzer can answer both "what is this code doing?" and "where is the relevant code?" more reliably.
 
@@ -278,6 +278,9 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Wire semantic retrieval to complement the lightweight lexical layer from Milestone 7.
 - Add intent-analysis passes that summarize component purpose, responsibilities, invariants, and likely ownership boundaries.
 - Persist the intent analysis in a form that is queryable alongside structural code data.
+
+**Initial slice:**
+- Start by isolating an embedding provider abstraction and a deterministic test path so the full-codebase pipeline can be verified before the watcher wiring is introduced.
 
 **Possible tools:**
 - Embedding model provider or local embedding runtime
