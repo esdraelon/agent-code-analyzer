@@ -10,9 +10,11 @@ from .projects import (
     add_project as add_project_record,
     get_project,
     ingest_project_tree as ingest_project_index,
+    lexical_search as lexical_search_records,
     list_projects as list_project_records,
     project_file_summary,
     resolve_project_path,
+    search_code as search_code_records,
     search_projects as search_project_records,
 )
 from .watcher import ProjectWatcherService
@@ -21,7 +23,7 @@ from .vector_index import bootstrap_existing_projects, get_vector_index
 SERVER_INSTRUCTIONS = (
     "Tree-sitter-backed MCP for code-first analysis, symbol navigation, and line-accurate verification. "
     "Use this server whenever the user asks about source structure, definitions, references, ownership boundaries, or refactor impact. "
-    "Prefer project-scoped tools such as parse_source, generate_ast_skeleton, list_code_symbols, detect_source_language, and read_file_excerpt before guessing from raw text. "
+    "Prefer project-scoped tools such as parse_source, generate_ast_skeleton, list_code_symbols, detect_source_language, read_file_excerpt, lexical_search, and search_code before guessing from raw text. "
     "When the question is about code, inspect the project first and answer with file paths, symbols, and line ranges when available. "
     "All analysis calls are project-scoped."
 )
@@ -108,6 +110,28 @@ def semantic_search(
 ) -> dict[str, object]:
     """Search the Qdrant-backed project index for semantically similar code chunks."""
     return get_vector_index().search(query, project=project, scope_type=scope_type, limit=limit)
+
+
+@mcp.tool()
+def lexical_search(
+    query: str,
+    project: str | None = None,
+    scope_type: str | None = None,
+    limit: int = 10,
+) -> dict[str, object]:
+    """Search the local lexical index for exact tokens, file paths, and identifiers."""
+    return lexical_search_records(query, project=project, scope_type=scope_type, limit=limit)
+
+
+@mcp.tool()
+def search_code(
+    query: str,
+    project: str | None = None,
+    scope_type: str | None = None,
+    limit: int = 10,
+) -> dict[str, object]:
+    """Search code using both lexical and semantic retrieval, then merge the results."""
+    return search_code_records(query, project=project, scope_type=scope_type, limit=limit)
 
 
 @mcp.tool()

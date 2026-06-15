@@ -9,6 +9,9 @@ from .project_models import ProjectRecord as _ProjectRecord
 from .parsing import analyze_file, detect_language
 from .project_repository import ProjectRepository as _ProjectRepository
 from .project_row_mapper import ProjectRowMapper as _ProjectRowMapper
+from .lexical_index import search as _lexical_search_impl
+from .lexical_index import sync_analysis as _sync_lexical_analysis
+from .vector_index import get_vector_index
 from .project_service import (
     _iter_source_files as _iter_source_files_impl,
     _load_project_metadata as _load_project_metadata_impl,
@@ -219,6 +222,18 @@ def _upsert_file_analysis(
             ),
         )
 
+    _sync_lexical_analysis(
+        conn,
+        project=project,
+        root_path=root_path,
+        file_id=file_id,
+        file_path=str(resolved_path),
+        analysis=analysis,
+        indexed_at=indexed_at,
+        file_size=file_size,
+        file_mtime_ns=file_mtime_ns,
+    )
+
 
 def _load_project_metadata(project: str) -> dict[str, Any] | None:
     _sync_storage()
@@ -267,3 +282,85 @@ def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
 def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
     _sync_storage()
     return _project_file_summary_impl(project, file_path)
+
+
+def lexical_search(
+    query: str,
+    *,
+    project: str | None = None,
+    scope_type: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    _sync_storage()
+    if project is not None:
+        project_data = get_project(project)
+        with _storage._connect(Path(project_data["db_path"])) as conn:
+            return _lexical_search_impl(conn, query, project=project, scope_type=scope_type, limit=limit)
+
+    results: list[dict[str, Any]] = []
+    for project_record in list_projects():
+        with _storage._connect(Path(project_record["db_path"])) as conn:
+            search_result = _lexical_search_impl(
+                conn,
+                query,
+                project=project_record["name"],
+                scope_type=scope_type,
+                limit=limit,
+            )
+        results.extend(search_result["results"])
+
+    results.sort(
+        key=lambda item: (
+            -float(item.get("score", 0.0)),
+            item.get("scope_type") != "symbol",
+            item.get("symbol_name", ""),
+            item.get("file_path", ""),
+        )
+    )
+    return {"query": query, "project": None, "scope_type": scope_type, "limit": limit, "results": results[:limit]}
+
+
+def _merge_search_results(*groups: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for group_index, group in enumerate(groups):
+        for result_index, result in enumerate(group.get("results", [])):
+            sqlite_uri = str(result.get("sqlite_uri", ""))
+            if not sqlite_uri:
+                continue
+            combined_score = float(result.get("score", 0.0)) + (1.0 / (result_index + 1)) + (0.1 * (len(groups) - group_index))
+            existing = merged.get(sqlite_uri)
+            if existing is None or combined_score > float(existing.get("score", 0.0)):
+                merged[sqlite_uri] = {**result, "score": combined_score}
+
+    merged_results = list(merged.values())
+    merged_results.sort(
+        key=lambda item: (
+            -float(item.get("score", 0.0)),
+            item.get("scope_type") != "symbol",
+            item.get("symbol_name", ""),
+            item.get("file_path", ""),
+        )
+    )
+    return merged_results[:limit]
+
+
+def search_code(
+    query: str,
+    *,
+    project: str | None = None,
+    scope_type: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    _sync_storage()
+    lexical = lexical_search(query, project=project, scope_type=scope_type, limit=limit)
+    semantic = get_vector_index().search(query, project=project, scope_type=scope_type, limit=limit)
+    results = _merge_search_results(lexical, semantic, limit=limit)
+    return {
+        "query": query,
+        "project": project,
+        "scope_type": scope_type,
+        "limit": limit,
+        "lexical": lexical,
+        "semantic": semantic,
+        "results": results,
+    }

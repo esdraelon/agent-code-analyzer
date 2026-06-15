@@ -53,6 +53,28 @@ class FakeSemanticIndex:
         }
 
 
+class FakeLexicalIndex:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, query: str, *, project=None, scope_type=None, limit: int = 10) -> dict[str, object]:
+        self.calls.append(
+            {
+                "query": query,
+                "project": project,
+                "scope_type": scope_type,
+                "limit": limit,
+            }
+        )
+        return {
+            "query": query,
+            "project": project,
+            "scope_type": scope_type,
+            "limit": limit,
+            "results": [{"sqlite_uri": "sqlite://projects/demo/files/2", "score": 0.95}],
+        }
+
+
 def test_semantic_search_tool_delegates_to_vector_index(monkeypatch) -> None:
     fake_index = FakeSemanticIndex()
     monkeypatch.setattr(server, "get_vector_index", lambda: fake_index)
@@ -63,6 +85,31 @@ def test_semantic_search_tool_delegates_to_vector_index(monkeypatch) -> None:
         {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4}
     ]
     assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/1"
+
+
+def test_lexical_search_tool_delegates_to_project_search(monkeypatch) -> None:
+    fake_lexical = FakeLexicalIndex()
+    monkeypatch.setattr(server, "lexical_search_records", fake_lexical)
+
+    result = server.lexical_search("hello world", project="demo", scope_type="symbol", limit=4)
+
+    assert fake_lexical.calls == [
+        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4}
+    ]
+    assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
+
+
+def test_search_code_tool_delegates_to_project_search(monkeypatch) -> None:
+    fake_search = FakeLexicalIndex()
+    monkeypatch.setattr(server, "search_code_records", fake_search)
+
+    result = server.search_code("hello world", project="demo", scope_type="symbol", limit=4)
+
+    assert fake_search.calls == [
+        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4}
+    ]
+    assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
+
 
 
 def test_file_excerpt_renderer_clamps_and_handles_reversed_bounds(tmp_path: Path) -> None:
