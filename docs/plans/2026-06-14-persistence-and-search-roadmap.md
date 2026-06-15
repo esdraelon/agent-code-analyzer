@@ -232,7 +232,45 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 6: Add coverage tooling and regression safety nets
+### Milestone 6: Add full-codebase embedding search and intent analysis
+
+**Status:** planned
+
+**Objective:** Replace the current best-effort vector projection with a real embedding-backed search layer that continuously reindexes the entire codebase on file changes, and add agent-driven intent analysis for each component so the analyzer can answer both "what is this code doing?" and "where is the relevant code?" more reliably.
+
+**Planned shape:**
+- Use a real embedding model instead of the current deterministic hash-derived vector projection.
+- Index the entire codebase in project-scoped chunks, not just opportunistic snippets.
+- Trigger incremental re-embedding from filesystem events so changed files are refreshed automatically.
+- Support hybrid retrieval: exact/lexical lookups via stored chunk text and metadata, plus semantic similarity via embeddings.
+- Add intent-analysis passes that summarize component purpose, responsibilities, invariants, and likely ownership boundaries.
+- Persist the intent analysis in a form that is queryable alongside structural code data.
+
+**Possible tools:**
+- Embedding model provider or local embedding runtime
+- Qdrant or equivalent vector store with payload filters
+- filesystem watcher / fswatch trigger path
+- agent orchestration for per-component intent summaries
+
+**Likely files:**
+- Modify: `src/agent_code_analyzer/vector_index.py`
+- Modify: `src/agent_code_analyzer/project_service.py`
+- Modify: `src/agent_code_analyzer/watcher.py`
+- Modify: `src/agent_code_analyzer/server.py`
+- Possibly create: `src/agent_code_analyzer/intent_analysis.py`
+- Possibly create: `src/agent_code_analyzer/embedding_index.py`
+- Add tests under `tests/`
+
+**Success criteria:**
+- The entire indexed codebase is covered by the embedding/search pipeline.
+- File changes automatically refresh the affected embeddings.
+- Exact/lexical and semantic searches both return useful project-scoped results.
+- Intent summaries exist for core components and improve code-analysis workflows.
+- The feature remains deterministic enough to test and verify.
+
+---
+
+### Milestone 7: Add coverage tooling and regression safety nets
 
 **Status:** planned
 
@@ -266,7 +304,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 7: Add code quality analysis
+### Milestone 8: Add code quality analysis
 
 **Status:** planned
 
@@ -296,7 +334,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 8: Add code security analysis
+### Milestone 9: Add code security analysis
 
 **Status:** planned
 
@@ -325,7 +363,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 9: Add mutation testing at the end
+### Milestone 10: Add mutation testing at the end
 
 **Status:** planned
 
@@ -359,7 +397,7 @@ Mutation testing is the most environment-sensitive milestone here. It depends on
 
 ---
 
-### Milestone 10: Cache review and tuning at the end
+### Milestone 11: Cache review and tuning at the end
 
 **Status:** planned
 
@@ -392,11 +430,12 @@ Mutation testing is the most environment-sensitive milestone here. It depends on
 3. Add caching
 4. Select a vector DB
 5. Build project-scoped vector ingestion/search
-6. Revisit sqlite vs vector ownership
-7. Add coverage tooling and regression safety nets
-8. Add code quality analysis
-9. Add code security analysis
-10. Add mutation testing
+6. Add full-codebase embedding search and intent analysis
+7. Revisit sqlite vs vector ownership
+8. Add coverage tooling and regression safety nets
+9. Add code quality analysis
+10. Add code security analysis
+11. Add mutation testing
 
 ---
 
