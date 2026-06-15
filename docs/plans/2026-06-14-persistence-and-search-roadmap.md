@@ -174,7 +174,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 4: Project-scoped code ingestion in the vector database
+### Milestone 5: Project-scoped code ingestion in the vector database
 
 **Status:** complete
 
@@ -203,7 +203,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 5: Decide whether vector DB supplements or replaces some sqlite responsibilities
+### Milestone 6: Decide whether vector DB supplements or replaces some sqlite responsibilities
 
 **Status:** complete
 
@@ -232,7 +232,40 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 6: Add full-codebase embedding search and intent analysis
+### Milestone 7: Add preprocessed lexical search
+
+**Status:** planned
+
+**Objective:** Add a lightweight exact/keyword document search layer without pulling in ELK, so the analyzer can do fast lexical lookup over preprocessed code text, filenames, and symbol metadata before semantic retrieval is needed.
+
+**Planned shape:**
+- Build a small preprocessed lexical index over file text, file paths, symbol names, and relevant metadata.
+- Normalize search inputs by lowercasing, splitting snake_case/camelCase, and preserving identifiers and phrases where useful.
+- Keep the implementation lightweight and local-first, ideally on top of sqlite/FTS5 or an equally small in-process index.
+- Support exact token, phrase, and filename-style lookups with predictable ranking.
+- Make the lexical layer project-scoped so it never crosses repository boundaries accidentally.
+
+**Possible tools:**
+- sqlite FTS5 or a compact in-process inverted index
+- preprocessing helpers for token normalization
+- project metadata filters
+
+**Likely files:**
+- Create: `src/agent_code_analyzer/lexical_index.py`
+- Modify: `src/agent_code_analyzer/project_service.py`
+- Modify: `src/agent_code_analyzer/server.py`
+- Possibly modify: `src/agent_code_analyzer/projects.py`
+- Add tests under `tests/`
+
+**Success criteria:**
+- Exact keyword and phrase searches return the expected files and symbols quickly.
+- Search ranking is more predictable than the current semantic-only path for literal lookups.
+- The feature stays lightweight and does not introduce a separate search service.
+- Preprocessing improves matches without making the query model opaque.
+
+---
+
+### Milestone 8: Add full-codebase embedding search and intent analysis
 
 **Status:** planned
 
@@ -242,7 +275,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Use a real embedding model instead of the current deterministic hash-derived vector projection.
 - Index the entire codebase in project-scoped chunks, not just opportunistic snippets.
 - Trigger incremental re-embedding from filesystem events so changed files are refreshed automatically.
-- Support hybrid retrieval: exact/lexical lookups via stored chunk text and metadata, plus semantic similarity via embeddings.
+- Wire semantic retrieval to complement the lightweight lexical layer from Milestone 7.
 - Add intent-analysis passes that summarize component purpose, responsibilities, invariants, and likely ownership boundaries.
 - Persist the intent analysis in a form that is queryable alongside structural code data.
 
@@ -264,13 +297,13 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 **Success criteria:**
 - The entire indexed codebase is covered by the embedding/search pipeline.
 - File changes automatically refresh the affected embeddings.
-- Exact/lexical and semantic searches both return useful project-scoped results.
+- Semantic searches return useful project-scoped results that complement lexical lookup.
 - Intent summaries exist for core components and improve code-analysis workflows.
 - The feature remains deterministic enough to test and verify.
 
 ---
 
-### Milestone 7: Add coverage tooling and regression safety nets
+### Milestone 9: Add coverage tooling and regression safety nets
 
 **Status:** planned
 
@@ -304,7 +337,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 8: Add code quality analysis
+### Milestone 10: Add code quality analysis
 
 **Status:** planned
 
@@ -334,7 +367,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 9: Add code security analysis
+### Milestone 11: Add code security analysis
 
 **Status:** planned
 
@@ -363,14 +396,14 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 10: Add mutation testing at the end
+### Milestone 12: Add mutation testing
 
 **Status:** planned
 
 **Objective:** Prove the unit tests catch meaningful behavior changes once the project structure, build boundaries, and environment assumptions are stable.
 
-**Why it is last:**
-Mutation testing is the most environment-sensitive milestone here. It depends on stable packaging, reliable test isolation, and a clear answer to which environments are authoritative. That makes it a better fit after the filesystem watcher, caching, coverage, and quality gates are settled.
+**Why it is late:**
+Mutation testing is the most environment-sensitive milestone here. It depends on stable packaging, reliable test isolation, and a clear answer to which environments are authoritative. That makes it a better fit after the filesystem watcher, caching, coverage, and quality gates are settled, before the final cache review.
 
 **Planned shape:**
 - Evaluate `mutatest` for Python first, plus any better-fit alternatives if the toolchain has moved.
@@ -397,7 +430,7 @@ Mutation testing is the most environment-sensitive milestone here. It depends on
 
 ---
 
-### Milestone 11: Cache review and tuning at the end
+### Milestone 13: Cache review and tuning at the end
 
 **Status:** planned
 
@@ -430,12 +463,14 @@ Mutation testing is the most environment-sensitive milestone here. It depends on
 3. Add caching
 4. Select a vector DB
 5. Build project-scoped vector ingestion/search
-6. Add full-codebase embedding search and intent analysis
-7. Revisit sqlite vs vector ownership
-8. Add coverage tooling and regression safety nets
-9. Add code quality analysis
-10. Add code security analysis
-11. Add mutation testing
+6. Decide whether vector DB supplements or replaces some sqlite responsibilities
+7. Add preprocessed lexical search
+8. Add full-codebase embedding search and intent analysis
+9. Add coverage tooling and regression safety nets
+10. Add code quality analysis
+11. Add code security analysis
+12. Add mutation testing
+13. Cache review and tuning at the end
 
 ---
 
