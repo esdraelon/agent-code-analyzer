@@ -81,9 +81,15 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 **Objective:** Break the largest implementation files into clearer collaborators before adding more features, so the persistence, parsing, and watcher layers remain maintainable.
 
 **Implemented shape:**
-- `projects.py` now delegates to repository / mapper / storage / service helpers.
+- `projects.py` now delegates to repository / mapper / storage / service helpers:
+  - `project_models.py`
+  - `project_storage.py`
+  - `project_row_mapper.py`
+  - `project_repository.py`
+  - `project_service.py`
 - `parsing.py` now uses explicit source parsing and symbol-attribution strategies.
 - `watcher.py` now separates queueing, project routing, and process supervision behind small collaborators.
+- Detailed execution record: `docs/plans/2026-06-14-refactor-projects-parsing-watcher.md`.
 - The public MCP surface and existing tests remained stable during the refactor.
 
 **Likely files:**
