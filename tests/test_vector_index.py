@@ -175,3 +175,63 @@ def test_semantic_search_filters_and_returns_payloads(monkeypatch) -> None:
     assert result["project"] == "demo"
     assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/7/symbols/0"
     assert result["results"][0]["symbol_name"] == "hello"
+
+
+def test_sync_analysis_round_trips_symbol_unit_type_into_search_results(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "demo"
+    root.mkdir()
+    file_path = root / "app.py"
+    file_path.write_text("def hello(name):\n    return f'hi {name}'\n", encoding="utf-8")
+
+    analysis = analyze_file(str(file_path))
+    fake_client = FakeQdrantClient()
+    captured: dict[str, Any] = {}
+
+    class FakePoint:
+        def __init__(self, score: float, payload: dict[str, Any]) -> None:
+            self.score = score
+            self.payload = payload
+
+    class FakeQueryResponse:
+        def __init__(self, points: list[FakePoint]) -> None:
+            self.points = points
+
+    def fake_query_points(**kwargs):
+        captured.update(kwargs)
+        filter_conditions = kwargs["query_filter"].must if kwargs.get("query_filter") else []
+        points: list[FakePoint] = []
+        for point in fake_client.upsert_calls[-1]["points"]:
+            payload = dict(point.payload)
+            if any(condition.key == "project_name" and condition.match.value != payload["project_name"] for condition in filter_conditions):
+                continue
+            if any(condition.key == "scope_type" and condition.match.value != payload["scope_type"] for condition in filter_conditions):
+                continue
+            points.append(FakePoint(0.99 if payload["scope_type"] == "symbol" else 0.5, payload))
+        return FakeQueryResponse(points)
+
+    monkeypatch.setattr(fake_client, "query_points", fake_query_points)
+
+    index = QdrantVectorIndex(url="http://example.test")
+    index._client = fake_client
+
+    sync_result = index.sync_analysis(
+        project="demo",
+        project_root=root,
+        file_id=7,
+        file_path=str(file_path),
+        analysis=analysis,
+        indexed_at="2026-06-14T18:00:00",
+        file_size=file_path.stat().st_size,
+        file_mtime_ns=file_path.stat().st_mtime_ns,
+    )
+    assert sync_result["points"] >= 2
+
+    search_result = index.search("hello", project="demo", scope_type="symbol", limit=5)
+
+    assert captured["collection_name"] == index.collection_name
+    assert search_result["query"] == "hello"
+    assert search_result["results"][0]["scope_type"] == "symbol"
+    assert search_result["results"][0]["unit_type"] == "method"
+    assert search_result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/7/symbols/0"
+    assert search_result["results"][0]["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
+    assert search_result["results"][0]["symbol_name"] == "hello"
