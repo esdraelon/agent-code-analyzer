@@ -31,6 +31,11 @@ Recommended tool order:
 - Use the project name on every analysis call.
 - Prefer code navigation tools over prose explanations when the user is asking where logic lives, how a file is shaped, or what should change.
 - After a pull, rebase, or refactor, refresh line numbers from source before updating plans or recommendations.
+- For retrieval, exact search, or intent-summary changes, run the ORK3 integration-eval skill regularly during development, not just at the end.
+- Annotate each ORK3 run with date/time, plan step, relevant commit, and relevant branch.
+- Use `docs/plans/2026-06-15-ork3-eval-log.md` to keep the run history together with the plan.
+- Compare usefulness, scope, anchoring, and compactness.
+- Keep the compact response path as the default; expand only the relevant hit or detail when the user asks for it.
 
 ## Expected behaviors
 
