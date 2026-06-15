@@ -16,6 +16,7 @@ from .projects import (
     search_projects as search_project_records,
 )
 from .watcher import ProjectWatcherService
+from .vector_index import bootstrap_existing_projects
 
 mcp = FastMCP(
     name="agent-code-analyzer",
@@ -150,6 +151,7 @@ def read_file_excerpt(
 
 
 def main() -> None:
+    bootstrap_existing_projects()
     watcher = ProjectWatcherService().start()
     try:
         mcp.run(transport="stdio")

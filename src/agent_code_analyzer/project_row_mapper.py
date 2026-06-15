@@ -80,7 +80,7 @@ class ProjectRowMapper:
     def symbol_rows(conn: sqlite3.Connection, file_id: int) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
-            SELECT symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature, languages
+            SELECT id, symbol_order, type, name, depth, start_row, start_column, end_row, end_column, signature, languages
             FROM symbols
             WHERE file_id = ?
             ORDER BY symbol_order ASC, id ASC
@@ -89,6 +89,8 @@ class ProjectRowMapper:
         ).fetchall()
         return [
             {
+                "sqlite_symbol_id": row["id"],
+                "symbol_order": row["symbol_order"],
                 "type": row["type"],
                 "name": row["name"],
                 "depth": row["depth"],

@@ -13,8 +13,9 @@ The installer validates the local prerequisites before syncing dependencies:
 - Python 3.11 or newer
 - `uv`
 - `fswatch`
+- Docker with the Compose plugin
 
-It then runs `uv sync --all-extras --locked` and verifies that the core packages import cleanly.
+It then runs `uv sync --all-extras --locked`, starts the local Qdrant container idempotently, and verifies that the core packages import cleanly.
 
 ## Core model
 

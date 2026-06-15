@@ -9,6 +9,29 @@ from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
 
 
+def _sync_qdrant_records(
+    *,
+    project: str,
+    root_path: Path,
+    file_id: int,
+    file_record: dict[str, Any],
+    symbol_rows: list[dict[str, Any]],
+) -> None:
+    try:
+        from .vector_index import get_vector_index
+
+        get_vector_index().sync_records(
+            project=project,
+            project_root=root_path,
+            file_id=file_id,
+            file_record=file_record,
+            symbol_rows=symbol_rows,
+        )
+    except Exception:
+        # Best-effort secondary index; sqlite remains authoritative.
+        pass
+
+
 def _load_project_metadata(project: str) -> dict[str, Any] | None:
     return ProjectRepository.load_project_metadata(project)
 
@@ -195,7 +218,11 @@ def _upsert_file_analysis(
             indexed_at,
         ),
     )
-    file_id = conn.execute("SELECT id FROM files WHERE rel_path = ?", (rel_path,)).fetchone()[0]
+
+    file_row = conn.execute("SELECT id FROM files WHERE rel_path = ?", (rel_path,)).fetchone()
+    if file_row is None:
+        raise ValueError("Failed to persist file analysis")
+    file_id = int(file_row[0])
     conn.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
     for order, symbol in enumerate(analysis["symbols"]):
         conn.execute(
@@ -218,6 +245,16 @@ def _upsert_file_analysis(
                 ProjectRowMapper.encode_languages(symbol.get("languages", [parsed.language])),
             ),
         )
+
+    file_record = ProjectRepository.read_file_record(conn, file_id)
+    symbol_rows = ProjectRepository.symbol_rows(conn, file_id)
+    _sync_qdrant_records(
+        project=project,
+        root_path=root_path,
+        file_id=file_id,
+        file_record=file_record,
+        symbol_rows=symbol_rows,
+    )
 
 
 def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
@@ -246,6 +283,12 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
             if refresh:
                 conn.execute("DELETE FROM symbols")
                 conn.execute("DELETE FROM files")
+                try:
+                    from .vector_index import get_vector_index
+
+                    get_vector_index().delete_project(project)
+                except Exception:
+                    pass
 
             files = _iter_source_files(root)
             total_symbols = 0
@@ -391,7 +434,14 @@ def sync_project_tree(project: str) -> dict[str, Any]:
             deleted_file_count = 0
             for rel_path in deleted_paths:
                 row = existing_files[rel_path]
-                conn.execute("DELETE FROM files WHERE id = ?", (int(row["id"]),))
+                file_id = int(row["id"])
+                try:
+                    from .vector_index import get_vector_index, _sqlite_file_uri
+
+                    get_vector_index().delete_file(_sqlite_file_uri(project, file_id))
+                except Exception:
+                    pass
+                conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
                 deleted_file_count += 1
 
             if not upserted_paths and deleted_file_count == 0 and existing_state is not None:
