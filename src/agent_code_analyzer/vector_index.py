@@ -45,6 +45,21 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _normalize_unit_type(symbol_type: str, *, fallback: str = "method") -> str:
+    normalized = str(symbol_type).strip().lower()
+    if not normalized:
+        return fallback
+    if "class" in normalized or "enum" in normalized or "struct" in normalized or "interface" in normalized:
+        return "class"
+    if "module" in normalized or "package" in normalized:
+        return "module"
+    if "file" in normalized:
+        return "file"
+    if "function" in normalized or "method" in normalized:
+        return "method"
+    return fallback
+
+
 def _symbol_range_text(source_text: str, symbol: dict[str, Any]) -> str:
     start_point = symbol.get("start_point") or {"row": 0, "column": 0}
     end_point = symbol.get("end_point") or start_point
@@ -167,6 +182,7 @@ class QdrantVectorIndex:
             "languages": languages,
             "scope_type": source_kind,
             "source_kind": source_kind,
+            "unit_type": source_kind,
             "sqlite_uri": sqlite_file_uri,
             "sqlite_file_uri": sqlite_file_uri,
             "sqlite_project_uri": f"sqlite://projects/{_slug_component(project)}",
@@ -204,6 +220,7 @@ class QdrantVectorIndex:
             "languages": file_languages,
             "scope_type": "symbol",
             "source_kind": "symbol",
+            "unit_type": _normalize_unit_type(str(symbol.get("type", ""))),
             "symbol_id": symbol.get("sqlite_symbol_id", symbol.get("id")),
             "sqlite_symbol_id": symbol.get("sqlite_symbol_id", symbol.get("id")),
             "symbol_order": symbol_order,

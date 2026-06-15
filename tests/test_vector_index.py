@@ -87,12 +87,14 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
     file_point = points[0]
     assert file_point.payload["project_name"] == "demo"
     assert file_point.payload["scope_type"] == "file"
+    assert file_point.payload["unit_type"] == "file"
     assert file_point.payload["sqlite_uri"] == "sqlite://projects/demo/files/7"
     assert file_point.payload["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
     assert file_point.payload["content_text"]
 
     symbol_point = points[1]
     assert symbol_point.payload["scope_type"] == "symbol"
+    assert symbol_point.payload["unit_type"] == "method"
     assert symbol_point.payload["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
     assert symbol_point.payload["sqlite_uri"].startswith("sqlite://projects/demo/files/7/symbols/")
     assert symbol_point.payload["symbol_name"] == "hello"
