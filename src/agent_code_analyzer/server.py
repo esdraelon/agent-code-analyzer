@@ -16,7 +16,7 @@ from .projects import (
     search_projects as search_project_records,
 )
 from .watcher import ProjectWatcherService
-from .vector_index import bootstrap_existing_projects
+from .vector_index import bootstrap_existing_projects, get_vector_index
 
 mcp = FastMCP(
     name="agent-code-analyzer",
@@ -92,6 +92,17 @@ def list_projects() -> list[dict[str, object]]:
 def search_projects(query: str) -> list[dict[str, object]]:
     """Search registered projects by name, root path, mode, or description."""
     return search_project_records(query)
+
+
+@mcp.tool()
+def semantic_search(
+    query: str,
+    project: str | None = None,
+    scope_type: str | None = None,
+    limit: int = 10,
+) -> dict[str, object]:
+    """Search the Qdrant-backed project index for semantically similar code chunks."""
+    return get_vector_index().search(query, project=project, scope_type=scope_type, limit=limit)
 
 
 @mcp.tool()

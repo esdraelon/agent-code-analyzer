@@ -29,6 +29,9 @@ class FakeQdrantClient:
     def upsert(self, **kwargs) -> None:
         self.upsert_calls.append(kwargs)
 
+    def query_points(self, **kwargs):
+        raise AssertionError("query_points should be monkeypatched in semantic search tests")
+
 
 class FakeBestEffortIndex:
     def __init__(self) -> None:
@@ -121,3 +124,52 @@ def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(
     if len(points) > 1:
         assert points[1].payload["sqlite_symbol_id"] == 1
         assert points[1].payload["sqlite_file_uri"] == "sqlite://projects/existing/files/1"
+
+
+def test_semantic_search_filters_and_returns_payloads(monkeypatch) -> None:
+    fake_client = FakeQdrantClient()
+    index = QdrantVectorIndex(url="http://example.test")
+    index._client = fake_client
+
+    captured: dict[str, Any] = {}
+
+    class FakePoint:
+        def __init__(self, score: float, payload: dict[str, Any]) -> None:
+            self.score = score
+            self.payload = payload
+
+    class FakeQueryResponse:
+        def __init__(self, points: list[FakePoint]) -> None:
+            self.points = points
+
+    def fake_query_points(**kwargs):
+        captured.update(kwargs)
+        return FakeQueryResponse(
+            [
+                FakePoint(
+                    0.88,
+                    {
+                        "project_name": "demo",
+                        "scope_type": "symbol",
+                        "sqlite_uri": "sqlite://projects/demo/files/7/symbols/0",
+                        "sqlite_file_uri": "sqlite://projects/demo/files/7",
+                        "file_path": "src/app.py",
+                        "symbol_name": "hello",
+                        "content_text": "def hello(name):",
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(fake_client, "query_points", fake_query_points)
+
+    result = index.search("hello world", project="demo", scope_type="symbol", limit=3)
+
+    assert captured["collection_name"] == index.collection_name
+    assert captured["limit"] == 3
+    assert captured["query_filter"].must[0].key == "project_name"
+    assert captured["query_filter"].must[1].key == "scope_type"
+    assert result["query"] == "hello world"
+    assert result["project"] == "demo"
+    assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/7/symbols/0"
+    assert result["results"][0]["symbol_name"] == "hello"

@@ -431,6 +431,63 @@ class QdrantVectorIndex:
                 points += int(result["points"])
         return {"project": project, "synced": files_synced, "files": files_synced, "points": points}
 
+    def search(
+        self,
+        query: str,
+        *,
+        project: str | None = None,
+        scope_type: str | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        needle = query.strip()
+        if not needle:
+            raise ValueError("query must not be empty")
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+
+        self.ensure_collection()
+        conditions: list[qmodels.FieldCondition] = []
+        if project:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="project_name",
+                    match=qmodels.MatchValue(value=project),
+                )
+            )
+        if scope_type:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="scope_type",
+                    match=qmodels.MatchValue(value=scope_type),
+                )
+            )
+        query_filter = qmodels.Filter(must=conditions) if conditions else None
+        response = self.client().query_points(
+            collection_name=self.collection_name,
+            query=_text_vector(needle, self.vector_size),
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        points = getattr(response, "points", response) or []
+        results: list[dict[str, Any]] = []
+        for point in points:
+            payload = dict(getattr(point, "payload", {}) or {})
+            results.append(
+                {
+                    "score": float(getattr(point, "score", 0.0)),
+                    **payload,
+                }
+            )
+        return {
+            "query": needle,
+            "project": project,
+            "scope_type": scope_type,
+            "limit": limit,
+            "results": results,
+        }
+
     def bootstrap_all_projects(self) -> dict[str, Any]:
         if not storage.METADATA_DB.exists():
             return {"projects": 0, "files": 0, "points": 0}
