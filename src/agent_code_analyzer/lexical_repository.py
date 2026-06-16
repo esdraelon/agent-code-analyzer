@@ -186,6 +186,37 @@ class LexicalRepository:
         return [dict(row) for row in rows]
 
     @staticmethod
+    def fetch_candidate_documents(
+        conn: sqlite3.Connection,
+        *,
+        query_terms: list[str],
+        project: str | None = None,
+        scope_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        LexicalRepository.ensure_schema(conn)
+        if not query_terms:
+            return LexicalRepository.fetch_documents(conn, project=project, scope_type=scope_type)
+
+        conditions: list[str] = []
+        params: list[Any] = []
+        if project is not None:
+            conditions.append("d.project_name = ?")
+            params.append(project)
+        if scope_type is not None:
+            conditions.append("d.scope_type = ?")
+            params.append(scope_type)
+        term_placeholders = ", ".join("?" for _ in query_terms)
+        conditions.append(
+            f"EXISTS (SELECT 1 FROM lexical_terms t WHERE t.doc_id = d.id AND t.project_name = d.project_name AND t.term IN ({term_placeholders}))"
+        )
+        where_sql = "WHERE " + " AND ".join(conditions) if conditions else ""
+        rows = conn.execute(
+            f"SELECT d.*, (SELECT COUNT(DISTINCT t.term) FROM lexical_terms t WHERE t.doc_id = d.id AND t.project_name = d.project_name AND t.term IN ({term_placeholders})) AS matched_term_count FROM lexical_documents d {where_sql} ORDER BY d.project_name ASC, d.scope_type ASC, d.file_path ASC, d.sqlite_uri ASC",
+            tuple(query_terms + params + query_terms),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
     def sync_analysis(
         conn: sqlite3.Connection,
         *,

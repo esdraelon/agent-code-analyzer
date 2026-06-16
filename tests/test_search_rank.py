@@ -4,16 +4,16 @@ from agent_code_analyzer.search_rank import build_embedding_text, normalize_iden
 from agent_code_analyzer.search_scoring import SearchScoringStrategy
 
 
-def test_score_search_candidate_prefers_exact_token_hits_over_loose_matches() -> None:
+def test_score_search_candidate_prefers_exact_identifier_hits_over_loose_matches() -> None:
     exact = score_search_candidate(
-        "mysql real escape string",
+        "mysql_real_escape_string",
         searchable_text="file path: src/db.php\nmysql real escape string\ndef mysql_real_escape_string(): pass",
         file_path="src/db.php",
         symbol_name="mysql_real_escape_string",
         content_text="def mysql_real_escape_string(): pass",
     )
     loose = score_search_candidate(
-        "mysql real escape string",
+        "mysql_real_escape_string",
         searchable_text="file path: src/helpers.php\nreal string helper\ndef real_string_helper(): pass",
         file_path="src/helpers.php",
         symbol_name="real_string_helper",

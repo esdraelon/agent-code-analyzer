@@ -48,6 +48,7 @@ class ScoreBreakdown:
     base_score: float
     exact_term_bonus: float
     loose_term_bonus: float
+    exact_phrase_bonus: float
     searchable_text_bonus: float
     symbol_text_bonus: float
     path_text_bonus: float
@@ -76,6 +77,7 @@ class SearchScoringStrategy:
                 base_score=float(base_score),
                 exact_term_bonus=0.0,
                 loose_term_bonus=0.0,
+                exact_phrase_bonus=0.0,
                 searchable_text_bonus=0.0,
                 symbol_text_bonus=0.0,
                 path_text_bonus=0.0,
@@ -97,10 +99,15 @@ class SearchScoringStrategy:
         score = float(base_score)
         exact_term_bonus = 0.0
         loose_term_bonus = 0.0
+        exact_phrase_bonus = 0.0
         if query_terms:
             exact_term_bonus = 0.9 * (len(exact_terms) / len(query_terms))
             loose_term_bonus = 0.2 * (len(loose_terms) / len(query_terms))
             score += exact_term_bonus + loose_term_bonus
+
+        if query_text and query_text in searchable:
+            exact_phrase_bonus = 0.8
+            score += exact_phrase_bonus
 
         searchable_text_bonus = 0.0
         symbol_text_bonus = 0.0
@@ -137,6 +144,7 @@ class SearchScoringStrategy:
             base_score=float(base_score),
             exact_term_bonus=exact_term_bonus,
             loose_term_bonus=loose_term_bonus,
+            exact_phrase_bonus=exact_phrase_bonus,
             searchable_text_bonus=searchable_text_bonus,
             symbol_text_bonus=symbol_text_bonus,
             path_text_bonus=path_text_bonus,

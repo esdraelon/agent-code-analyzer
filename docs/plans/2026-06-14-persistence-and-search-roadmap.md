@@ -234,9 +234,14 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 7: Add preprocessed lexical search
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Add a lightweight exact and keyword search layer so the analyzer can answer literal queries quickly before it falls back to semantic retrieval.
+
+**Current state:**
+- The lexical path is implemented on the `docs/docs-folder-organization` branch.
+- Candidate pruning, ranking improvements, and timing instrumentation are in place.
+- The full-scan fallback was removed to keep latency bounded.
 
 **Why this belongs here:**
 Lexical search is the cheapest high-signal win in the roadmap. It gives predictable results for file names, symbol names, and exact phrases, and it also improves the quality of the later embedding work because literal candidates can be surfaced first.
@@ -290,7 +295,7 @@ Lexical search is the cheapest high-signal win in the roadmap. It gives predicta
 
 ### Milestone 8: Add full-codebase embedding search
 
-**Status:** in progress
+**Status:** planned
 
 **Objective:** Replace the current best-effort vector projection with a practical semantic retrieval layer that can search the whole codebase using real embeddings instead of hash-derived placeholders.
 
@@ -316,10 +321,10 @@ Lexical search handles literal precision; this milestone handles semantic recall
 3. Build the embedding index / point builder around stable IDs.
 4. Wire incremental refresh into project sync and watcher events.
 5. Fuse lexical and semantic retrieval into a predictable result order.
-6. Compare the hybrid output against ORK3 benchmark queries.
+6. Compare the hybrid output against the benchmark queries.
 
 **Initial slice:**
-- Build and wire the lexical index first, then compare it against the existing semantic path on ORK3 queries.
+- Build and wire the lexical index first, then compare it against the existing semantic path on the benchmark queries.
 
 **Possible tools:**
 - Embedding model provider or local embedding runtime
