@@ -38,7 +38,8 @@ This plan introduces two new capabilities:
 
 ## Milestone 6: Full-codebase embedding search and intent analysis
 
-**Status:** planned
+**Status:** merged
+**Note:** The initial ranking and hybrid-search pass landed and was merged on the feature branch; the remaining work below is now follow-up hardening and search-quality refinement.
 
 **Development verification:**
 - Run the ORK3 integration-eval skill during implementation, not just after the milestone lands.
@@ -189,6 +190,8 @@ def test_embedding_provider_returns_real_vector_shape():
 ### Task 5: Add intent analysis for components
 
 **Objective:** Produce component-level semantic summaries that explain responsibilities, boundaries, and likely ownership.
+
+**Phase:** defer this until the end of the milestone, after exact/semantic retrieval and the end-to-end validation pass.
 
 **Files:**
 - Possibly create: `src/agent_code_analyzer/intent_analysis.py`
@@ -413,9 +416,9 @@ The implementation should be covered at several levels so the agentic retrieval 
 2. Add the real embedding provider interface.
 3. Add incremental reindexing from watcher events.
 4. Add exact/lexical search.
-5. Add intent analysis and persistence.
-6. Expose the features in the MCP server.
-7. Validate the whole pipeline with tests.
+5. Expose the retrieval features in the MCP server.
+6. Validate the whole pipeline with tests.
+7. Add intent analysis and persistence as the final production step.
 
 ---
 
@@ -424,3 +427,46 @@ The implementation should be covered at several levels so the agentic retrieval 
 - Use lightweight dependency injection by constructor or function parameter for the embedding provider, intent analyzer, queue primitive, Qdrant client, and response-shaping logic.
 - Avoid a heavyweight DI container or service-locator pattern.
 - Keep module-level wrappers thin and use injected collaborators in the core code paths so the system remains testable and easy to swap backend behavior later.
+
+## Post-merge search improvements
+
+If we continue after the merge, the best next gains are search-quality improvements rather than more surface area:
+
+**Current focus:** query normalization and expansion.
+
+**Validation:** targeted unit tests and the full pytest suite passed on this branch.
+
+1. **Query normalization and expansion**
+   - normalize punctuation, camelCase, snake_case, and acronym variants
+   - expand common aliases and domain terms before lexical lookup
+   - preserve an exact-match fast path so normalization never hides literal hits
+
+2. **Better hybrid ranking fusion**
+   - fuse lexical, semantic, and structural scores with explicit weights
+   - bias toward exact symbol matches for narrow queries
+   - down-rank generated, vendored, and minified content more aggressively
+
+3. **Tree-sitter-aware reranking**
+   - prefer hits whose symbol kind matches the query intent
+   - boost definitions over references when the user is looking for an implementation point
+   - surface parent module/class context for small symbol hits
+
+4. **Multi-stage retrieval**
+   - shortlist files first, then expand to symbols and chunks inside those files
+   - cap result fanout so the agent sees fewer, better candidates
+   - keep the current “smallest relevant slice” principle intact
+
+5. **Retrieval evaluation harness**
+   - add a repeatable benchmark set for exact, lexical, semantic, and hybrid queries
+   - measure precision on symbol/name lookups and recall on concept queries
+   - track regressions when ranking weights or chunking rules change
+
+6. **Intent-aware search integration**
+   - attach intent summaries to search results as context, not a separate destination
+   - use intent metadata to prioritize the most likely owning module or service
+   - add fallback behavior when only coarse-grained intent is available
+
+7. **Operational hardening**
+   - cache hot queries and repeated project lookups
+   - keep refreshes incremental and debounced
+   - ensure the ranking path stays deterministic enough for CI and review
