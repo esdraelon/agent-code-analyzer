@@ -16,6 +16,13 @@ from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
 from .search_rank import build_embedding_text, tokenize_text
 from .search_scoring import DEFAULT_SEARCH_SCORER
+from .vector_payload_factory import (
+    file_payload,
+    sqlite_file_uri as factory_sqlite_file_uri,
+    sqlite_symbol_uri as factory_sqlite_symbol_uri,
+    stable_point_id,
+    symbol_payload,
+)
 
 QDRANT_DEFAULT_URL = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_URL", "http://127.0.0.1:6333")
 QDRANT_DEFAULT_COLLECTION = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_COLLECTION", "agent_code_analyzer_chunks_v2")
@@ -35,7 +42,7 @@ def _sqlite_file_uri(project: str, file_id: int) -> str:
 
 
 def _sqlite_symbol_uri(project: str, file_id: int, symbol_order: int) -> str:
-    return f"{_sqlite_file_uri(project, file_id)}/symbols/{symbol_order}"
+    return f"{factory_sqlite_file_uri(project, file_id)}/symbols/{symbol_order}"
 
 
 def _stable_point_id(sqlite_uri: str) -> str:
@@ -153,7 +160,7 @@ class QdrantVectorIndex:
         is_query: bool = False,
     ) -> qmodels.PointStruct:
         if source_kind == "file":
-            payload = self._file_payload(
+            payload = file_payload(
                 project=project,
                 project_root=project_root,
                 file_id=file_id,
@@ -168,7 +175,7 @@ class QdrantVectorIndex:
             )
         else:
             assert symbol is not None
-            payload = self._symbol_payload(
+            payload = symbol_payload(
                 project=project,
                 project_root=project_root,
                 file_id=file_id,
@@ -181,7 +188,7 @@ class QdrantVectorIndex:
             )
         point_uri = sqlite_uri or str(payload["sqlite_uri"])
         return qmodels.PointStruct(
-            id=_stable_point_id(point_uri),
+            id=stable_point_id(point_uri),
             vector=self._embed_query(chunk_text) if is_query else self._embed_document(chunk_text),
             payload=payload,
         )
@@ -242,7 +249,7 @@ class QdrantVectorIndex:
         chunk_text: str,
         source_kind: str,
     ) -> dict[str, Any]:
-        sqlite_file_uri = _sqlite_file_uri(project, file_id)
+        sqlite_file_uri = factory_sqlite_file_uri(project, file_id)
         return {
             "project_name": project,
             "project_root": project_root,
@@ -279,8 +286,8 @@ class QdrantVectorIndex:
         chunk_text: str,
     ) -> dict[str, Any]:
         symbol_order = int(symbol.get("symbol_order", symbol.get("order", 0)))
-        sqlite_file_uri = _sqlite_file_uri(project, file_id)
-        sqlite_uri = _sqlite_symbol_uri(project, file_id, symbol_order)
+        sqlite_file_uri = factory_sqlite_file_uri(project, file_id)
+        sqlite_uri = factory_sqlite_symbol_uri(project, file_id, symbol_order)
         return {
             "project_name": project,
             "project_root": project_root,
@@ -460,7 +467,7 @@ class QdrantVectorIndex:
         file_mtime_ns: int,
     ) -> dict[str, Any]:
         project_root_text = str(Path(project_root).resolve())
-        sqlite_file_uri = _sqlite_file_uri(project, file_id)
+        sqlite_file_uri = factory_sqlite_file_uri(project, file_id)
         self.delete_file(sqlite_file_uri)
         points = self._build_points_from_analysis(
             project=project,
@@ -491,7 +498,7 @@ class QdrantVectorIndex:
         symbol_rows: list[dict[str, Any]],
     ) -> dict[str, Any]:
         project_root_text = str(Path(project_root).resolve())
-        sqlite_file_uri = _sqlite_file_uri(project, file_id)
+        sqlite_file_uri = factory_sqlite_file_uri(project, file_id)
         self.delete_file(sqlite_file_uri)
         points = self._build_points_from_records(
             project=project,

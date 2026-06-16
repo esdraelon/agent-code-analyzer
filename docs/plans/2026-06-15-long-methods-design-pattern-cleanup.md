@@ -115,6 +115,8 @@ I checked the current branch for long files and long methods. The main hotspots 
 
 ### Task 3: Split Qdrant payload assembly into a Builder/Factory layer
 
+**Status:** complete
+
 **Objective:** Remove payload-construction noise from `vector_index.py` and make point creation easier to test.
 
 **Files:**
@@ -142,6 +144,8 @@ I checked the current branch for long files and long methods. The main hotspots 
 ---
 
 ### Task 4: Break project synchronization into a Coordinator pipeline
+
+**Status:** complete
 
 **Objective:** Turn `ingest_project_tree` and `sync_project_tree` into orchestration layers that call smaller steps.
 
