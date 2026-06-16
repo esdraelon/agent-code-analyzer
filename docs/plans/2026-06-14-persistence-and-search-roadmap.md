@@ -89,7 +89,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
   - `project_service.py`
 - `parsing.py` now uses explicit source parsing and symbol-attribution strategies.
 - `watcher.py` now separates queueing, project routing, and process supervision behind small collaborators.
-- Detailed execution record: `docs/plans/2026-06-14-refactor-projects-parsing-watcher.md`.
+- Detailed execution record: `docs/complete/2026-06-14-refactor-projects-parsing-watcher.md`.
 - The public MCP surface and existing tests remained stable during the refactor.
 
 **Likely files:**
@@ -236,14 +236,36 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 **Status:** planned
 
-**Objective:** Add a lightweight exact/keyword document search layer without pulling in ELK, so the analyzer can do fast lexical lookup over preprocessed code text, filenames, and symbol metadata before semantic retrieval is needed.
+**Objective:** Add a lightweight exact and keyword search layer so the analyzer can answer literal queries quickly before it falls back to semantic retrieval.
 
-**Planned shape:**
-- Build a small preprocessed lexical index over file text, file paths, symbol names, and relevant metadata.
-- Normalize search inputs by lowercasing, splitting snake_case/camelCase, and preserving identifiers and phrases where useful.
-- Keep the implementation lightweight and local-first, ideally on top of sqlite/FTS5 or an equally small in-process index.
-- Support exact token, phrase, and filename-style lookups with predictable ranking.
-- Make the lexical layer project-scoped so it never crosses repository boundaries accidentally.
+**Why this belongs here:**
+Lexical search is the cheapest high-signal win in the roadmap. It gives predictable results for file names, symbol names, and exact phrases, and it also improves the quality of the later embedding work because literal candidates can be surfaced first.
+
+**Detailed shape:**
+- Build a small preprocessed lexical index over:
+  - file text
+  - file paths
+  - symbol names
+  - normalized identifiers and metadata
+- Normalize queries by:
+  - lowercasing
+  - splitting `snake_case` and `camelCase`
+  - preserving exact identifiers and quoted phrases
+  - keeping filename-style tokens intact
+- Keep ranking simple and explainable:
+  - exact token hits rank first
+  - phrase hits rank next
+  - filename and path hits are boosted
+  - symbol-name hits outrank generic body text when the query is clearly identifier-shaped
+- Keep the index project-scoped so results never cross repository boundaries.
+- Keep the implementation local-first, ideally on top of sqlite FTS5 or a similarly small in-process index.
+
+**Implementation slices:**
+1. Define the document model for lexical indexing.
+2. Build the normalizer/tokenizer for query and document text.
+3. Implement project-scoped indexing and refresh logic.
+4. Wire search ranking so exact and phrase matches surface ahead of looser hits.
+5. Expose the result path through the server helpers.
 
 **Possible tools:**
 - sqlite FTS5 or a compact in-process inverted index
@@ -262,37 +284,53 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - Search ranking is more predictable than the current semantic-only path for literal lookups.
 - The feature stays lightweight and does not introduce a separate search service.
 - Preprocessing improves matches without making the query model opaque.
+- The index remains fully project-scoped.
 
 ---
 
-### Milestone 8: Add full-codebase embedding search and intent analysis
+### Milestone 8: Add full-codebase embedding search
 
 **Status:** in progress
 
-**Objective:** Replace the current best-effort vector projection with a practical hybrid retrieval layer that combines lexical lookup and semantic similarity so the analyzer can answer both "where is it?" and "what is like it?" reliably.
+**Objective:** Replace the current best-effort vector projection with a practical semantic retrieval layer that can search the whole codebase using real embeddings instead of hash-derived placeholders.
 
-**Planned shape:**
+**Why this is separate from milestone 7:**
+Lexical search handles literal precision; this milestone handles semantic recall. The two layers should cooperate, not compete.
+
+**Detailed shape:**
+- Replace the current hash-derived vectors with a real embedding model.
+- Define what gets embedded and how chunks are formed:
+  - raw source text
+  - symbol signatures
+  - file path context
+  - AST skeleton or other structural hints
+- Keep chunk identifiers stable so reindexing and incremental refresh remain deterministic.
 - Keep the semantic layer project-scoped and payload-rich.
-- Add a lightweight lexical index for exact tokens, filenames, and identifiers.
-- Merge lexical and semantic results so literal lookups rank before similarity-only matches.
-- Keep the implementation local-first and deterministic enough to test.
-- Defer intent summaries until the core retrieval paths are stable.
+- Keep lexical and semantic retrieval separate, then merge their results at query time.
+- Rank literal lexical hits before similarity-only matches when the query clearly contains exact tokens.
+- Trigger embedding refreshes from filesystem events so changed files stay current.
+
+**Implementation slices:**
+1. Lock the embedding provider interface.
+2. Decide the chunking strategy and metadata shape.
+3. Build the embedding index / point builder around stable IDs.
+4. Wire incremental refresh into project sync and watcher events.
+5. Fuse lexical and semantic retrieval into a predictable result order.
+6. Compare the hybrid output against ORK3 benchmark queries.
 
 **Initial slice:**
-- Build and wire the lexical index, then compare it against the existing semantic path on ORK3 queries.
+- Build and wire the lexical index first, then compare it against the existing semantic path on ORK3 queries.
 
 **Possible tools:**
 - Embedding model provider or local embedding runtime
 - Qdrant or equivalent vector store with payload filters
 - filesystem watcher / fswatch trigger path
-- agent orchestration for per-component intent summaries
 
 **Likely files:**
 - Modify: `src/agent_code_analyzer/vector_index.py`
 - Modify: `src/agent_code_analyzer/project_service.py`
 - Modify: `src/agent_code_analyzer/watcher.py`
 - Modify: `src/agent_code_analyzer/server.py`
-- Possibly create: `src/agent_code_analyzer/intent_analysis.py`
 - Possibly create: `src/agent_code_analyzer/embedding_index.py`
 - Add tests under `tests/`
 
@@ -300,7 +338,6 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 - The entire indexed codebase is covered by the embedding/search pipeline.
 - File changes automatically refresh the affected embeddings.
 - Semantic searches return useful project-scoped results that complement lexical lookup.
-- Intent summaries exist for core components and improve code-analysis workflows.
 - The feature remains deterministic enough to test and verify.
 
 ---
@@ -309,7 +346,7 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 **Status:** planned
 
-**Objective:** Make unit coverage and regression checks visible and repeatable before the more environment-sensitive work.
+**Objective:** Make unit coverage and regression checks visible and repeatable before the intent-analysis work resumes.
 
 **Planned shape:**
 - Add coverage reporting to the normal test workflow.
@@ -339,100 +376,41 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ---
 
-### Milestone 10: Add code quality analysis
+### Milestone 10: Add component intent analysis
 
 **Status:** planned
 
-**Objective:** Enforce maintainable code shape and style automatically.
+**Objective:** Add component-level summaries that explain responsibilities, boundaries, and likely ownership after the retrieval layers and safety nets are stable.
+
+**Why it moved here:**
+Intent analysis is useful, but it depends on the retrieval pipeline being trustworthy first. Coverage and regression safety nets should come before it so the summaries sit on a stable base.
 
 **Planned shape:**
-- Add linting and style enforcement.
-- Add method/function complexity analysis.
-- Add static checks for code structure, naming, and pattern misuse where practical.
-- Capture useful analysis in CI and developer commands.
+- Produce a deeper semantic pass over meaningful code units.
+- Store component-level summaries, responsibilities, and boundaries.
+- Make those summaries queryable alongside structural code data.
+- Keep the intent layer project-scoped and deterministic enough to test.
 
-**Possible tools:**
-- Ruff / Black / pytest-based quality checks
-- complexity analysis tools such as radon or similar
-- design-pattern or architecture checks where they fit the repo
-- agent skills for code review and quality triage
+**Detailed scope questions:**
+- What counts as a component: file, module, class, service, or package?
+- Should intent summaries be one per file, or one per meaningful unit inside the file?
+- Should intent analysis run synchronously on change, or be queued as a background pass?
+- Do we want the intent layer to summarize architecture boundaries, dependencies, and risk areas?
 
 **Likely files:**
-- Modify: `pyproject.toml`
-- Create: `docs/decisions/code-quality.md`
-- Possibly create: `.github/workflows/quality.yml`
+- Possibly create: `src/agent_code_analyzer/intent_analysis.py`
+- Modify: `src/agent_code_analyzer/vector_index.py`
+- Modify: `src/agent_code_analyzer/server.py`
+- Add tests under `tests/`
 
 **Success criteria:**
-- Linting and style rules run automatically.
-- Complexity hotspots are visible.
-- Quality regressions are caught early.
+- A component returns a stable intent summary.
+- The summary is project-scoped and queryable.
+- The intent layer improves code-analysis workflows without destabilizing retrieval.
 
 ---
 
-### Milestone 11: Add code security analysis
-
-**Status:** planned
-
-**Objective:** Add automated security checks and agent workflows for unsafe code detection.
-
-**Planned shape:**
-- Add dependency and source-code security scanning.
-- Add secret detection and risky-pattern analysis where appropriate.
-- Define security review skills and automation for recurring checks.
-
-**Possible tools:**
-- `pip-audit` or equivalent dependency auditing
-- `bandit` or similar Python security scanner
-- secret scanning tools where relevant
-- agent skills for security review and triage
-
-**Likely files:**
-- Modify: `pyproject.toml`
-- Create: `docs/decisions/code-security.md`
-- Possibly create: `.github/workflows/security.yml`
-
-**Success criteria:**
-- Security scans run automatically.
-- Findings are actionable and documented.
-- Unsafe patterns are flagged before merge.
-
----
-
-### Milestone 12: Add mutation testing
-
-**Status:** planned
-
-**Objective:** Prove the unit tests catch meaningful behavior changes once the project structure, build boundaries, and environment assumptions are stable.
-
-**Why it is late:**
-Mutation testing is the most environment-sensitive milestone here. It depends on stable packaging, reliable test isolation, and a clear answer to which environments are authoritative. That makes it a better fit after the filesystem watcher, caching, coverage, and quality gates are settled, before the final cache review.
-
-**Planned shape:**
-- Evaluate `mutatest` for Python first, plus any better-fit alternatives if the toolchain has moved.
-- Decide whether mutation runs should target the full suite or a curated subset first.
-- Establish a minimal mutation gate for critical modules before expanding coverage.
-
-**Decision inputs:**
-- compatibility with Python 3.11+
-- setup overhead in this repo
-- reporting quality and exit codes
-- ability to focus on changed modules or files
-- behavior across local dev, CI, and project-specific environments
-
-**Likely files:**
-- Create: `docs/decisions/mutation-testing.md`
-- Possibly create: `scripts/mutation.sh` or equivalent tooling entrypoint
-- Modify: `pyproject.toml` if we add dependency/dev tooling hooks
-- Add tests or CI wiring under `tests/` or `.github/workflows/`
-
-**Success criteria:**
-- At least one mutation-testing tool is selected and documented.
-- The repo can run a mutation pass in a repeatable way.
-- The result is actionable, not just a vanity score.
-
----
-
-### Milestone 13: Cache review and tuning at the end
+### Milestone 11: Cache review and tuning at the end
 
 **Status:** planned
 
@@ -467,12 +445,10 @@ Mutation testing is the most environment-sensitive milestone here. It depends on
 5. Build project-scoped vector ingestion/search
 6. Decide whether vector DB supplements or replaces some sqlite responsibilities
 7. Add preprocessed lexical search
-8. Add full-codebase embedding search and intent analysis
+8. Add full-codebase embedding search
 9. Add coverage tooling and regression safety nets
-10. Add code quality analysis
-11. Add code security analysis
-12. Add mutation testing
-13. Cache review and tuning at the end
+10. Add component intent analysis
+11. Cache review and tuning at the end
 
 ---
 

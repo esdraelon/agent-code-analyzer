@@ -45,7 +45,7 @@ I checked the current branch for long files and long methods. The main hotspots 
 
 ## Cleanup milestone: extract standard design patterns
 
-**Status:** in progress
+**Status:** complete
 
 **Objective:** Convert the longest implementation paths into small collaborating objects with explicit responsibilities.
 
@@ -233,6 +233,8 @@ I checked the current branch for long files and long methods. The main hotspots 
 ---
 
 ### Task 7: Re-run the full verification ladder
+
+**Status:** complete
 
 **Objective:** Prove the cleanup did not change behavior or weaken coverage.
 
