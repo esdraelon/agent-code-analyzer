@@ -45,11 +45,11 @@ That gives the scorer a smaller candidate set for the common case where the quer
 
 Generated/minified content is still penalized so it does not crowd out source files that are more likely to answer a query well.
 
-### 3. Fallback for completeness
+### 3. No slow fallback
 
-If candidate pruning produces no result at all, the search path falls back to the full lexical scan.
+If candidate pruning produces no result, the search path now returns fewer or no lexical hits rather than falling back to a full scan.
 
-That preserves the old completeness behavior for odd queries and keeps the search surface stable, while still letting the common case run against a smaller candidate set.
+That is intentional: for lexical analysis, predictable latency matters more than exhaustive recall. When the query is too broad or unusual, the agent should proceed with weaker lexical results or manual inspection rather than waiting on an expensive scan.
 
 ### 4. Timing instrumentation
 
@@ -72,7 +72,7 @@ The instrumentation is internal and does not change the public return shape of t
    - exact phrase matches add a large bonus
    - symbol/path matches add secondary bonuses
    - generated/minified content is discounted
-5. If no document survives scoring, scan the full lexical document set as a fallback.
+5. If no document survives scoring, return the candidate-limited result set as-is.
 6. Sort by score, then by symbol/file preference.
 
 ## Why this keeps the API surface unchanged
@@ -91,12 +91,10 @@ The intended quality improvement is straightforward:
 - query phrases should be rewarded when they appear intact
 - file and symbol hints should reinforce the ranking
 
-The performance concern is the fallback path:
+- The common case should be cheaper because it scans fewer candidate rows.
+- The worst case should remain bounded because there is no full lexical-scan fallback.
 
-- the common case should be cheaper because it scans fewer candidate rows
-- the worst case can still degrade to a full lexical scan when the query is too broad or too unusual
-
-That is acceptable for now because the full scan preserves correctness, and the instrumentation makes the slow paths visible.
+This favors latency over exhaustiveness, which is the right tradeoff for agent-side lexical analysis.
 
 ## Integration notes
 

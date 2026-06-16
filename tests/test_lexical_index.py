@@ -194,3 +194,31 @@ def test_lexical_search_emits_timing_metrics(tmp_path: Path, monkeypatch, caplog
         assert "candidate_ms=" in timing_messages[0]
         assert "scoring_ms=" in timing_messages[0]
         assert "total_ms=" in timing_messages[0]
+
+
+def test_lexical_search_does_not_fall_back_to_full_scan(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
+
+    from agent_code_analyzer import lexical_repository
+    from agent_code_analyzer.lexical_index import search
+
+    def fail_fetch_documents(*args, **kwargs):
+        raise AssertionError("full lexical scan fallback must not be used")
+
+    monkeypatch.setattr(
+        lexical_repository.LexicalRepository,
+        "fetch_candidate_documents",
+        staticmethod(lambda *args, **kwargs: []),
+    )
+    monkeypatch.setattr(
+        lexical_repository.LexicalRepository,
+        "fetch_documents",
+        staticmethod(fail_fetch_documents),
+    )
+
+    db_path = storage._project_db_path("demo")
+    with storage._connect(db_path) as conn:
+        storage._ensure_project_schema(conn)
+        result = search(conn, "noisy rare query", project="demo", scope_type="symbol", limit=5)
+
+    assert result["results"] == []

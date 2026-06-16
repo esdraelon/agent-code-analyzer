@@ -128,19 +128,6 @@ def search(
         results.append(document)
     scoring_elapsed_ms = (perf_counter() - scoring_started_at) * 1000.0
 
-    fallback_elapsed_ms = 0.0
-    fallback_used = False
-    if not results:
-        fallback_used = True
-        fallback_started_at = perf_counter()
-        for document in LexicalRepository.fetch_documents(conn, project=project, scope_type=scope_type):
-            score = _score_document(document, query_terms_list, query_text)
-            if score <= 0:
-                continue
-            document["score"] = score
-            results.append(document)
-        fallback_elapsed_ms = (perf_counter() - fallback_started_at) * 1000.0
-
     sort_started_at = perf_counter()
     results.sort(
         key=lambda item: (
@@ -154,16 +141,14 @@ def search(
     total_elapsed_ms = (perf_counter() - started_at) * 1000.0
 
     logger.info(
-        "lexical_search_timing query=%r project=%r scope_type=%r candidates=%d matched=%d fallback=%s candidate_ms=%.3f scoring_ms=%.3f fallback_ms=%.3f sort_ms=%.3f total_ms=%.3f",
+        "lexical_search_timing query=%r project=%r scope_type=%r candidates=%d matched=%d candidate_ms=%.3f scoring_ms=%.3f sort_ms=%.3f total_ms=%.3f",
         query,
         project,
         scope_type,
         len(candidate_documents),
         len(results),
-        fallback_used,
         candidate_elapsed_ms,
         scoring_elapsed_ms,
-        fallback_elapsed_ms,
         sort_elapsed_ms,
         total_elapsed_ms,
     )
