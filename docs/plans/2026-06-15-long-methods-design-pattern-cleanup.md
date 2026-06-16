@@ -180,6 +180,8 @@ I checked the current branch for long files and long methods. The main hotspots 
 
 ### Task 5: Extract lexical storage and query logic into a Repository layer
 
+**Status:** complete
+
 **Objective:** Make `lexical_index.py` responsible for search semantics while the database work lives in a clearer repository boundary.
 
 **Files:**
@@ -207,6 +209,8 @@ I checked the current branch for long files and long methods. The main hotspots 
 ---
 
 ### Task 6: Keep the embedding provider as a narrow adapter boundary
+
+**Status:** complete
 
 **Objective:** Confirm the embedding provider stays small and only gets split if another backend appears.
 
