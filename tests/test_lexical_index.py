@@ -54,11 +54,16 @@ def test_lexical_search_finds_split_identifiers_and_file_paths(tmp_path: Path, m
 
         assert helper_result["results"][0]["symbol_name"] == "camelCaseHelper"
         assert helper_result["results"][0]["scope_type"] == "symbol"
+        assert helper_result["results"][0]["start_row"] == 0
+        assert helper_result["results"][0]["end_row"] >= helper_result["results"][0]["start_row"]
         assert "camelCaseHelper" in helper_result["results"][0]["content_text"]
         assert broad_result["results"][0]["symbol_name"] in {"camelCaseHelper", "Worker"}
         assert any(item["symbol_name"] == "camelCaseHelper" for item in broad_result["results"])
         assert path_result["results"][0]["scope_type"] == "file"
         assert path_result["results"][0]["file_path"].endswith("src/app.py")
+        assert path_result["results"][0]["root_type"]
+        assert path_result["results"][0]["start_row"] == 0
+        assert path_result["results"][0]["end_row"] >= path_result["results"][0]["start_row"]
 
 
 def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
@@ -152,6 +157,8 @@ def test_lexical_search_handles_acronym_identifiers(tmp_path: Path, monkeypatch)
 
         assert result["results"][0]["symbol_name"] == "XMLHttpRequest2"
         assert result["results"][0]["scope_type"] == "symbol"
+        assert result["results"][0]["start_row"] == 0
+        assert result["results"][0]["end_row"] >= result["results"][0]["start_row"]
 
 
 def test_lexical_search_emits_timing_metrics(tmp_path: Path, monkeypatch, caplog) -> None:

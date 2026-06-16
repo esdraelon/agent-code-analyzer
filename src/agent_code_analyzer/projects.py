@@ -161,17 +161,25 @@ def _upsert_file_analysis(
     skeleton = analysis["skeleton"]
     byte_length = len(parsed.source_code.encode("utf-8"))
     languages = _ProjectRowMapper.encode_languages(analysis.get("languages", [parsed.language]))
+    root_start_row = int(root_node.start_point[0])
+    root_start_column = int(root_node.start_point[1])
+    root_end_row = int(root_node.end_point[0])
+    root_end_column = int(root_node.end_point[1])
 
     conn.execute(
         """
         INSERT INTO files (
-            rel_path, abs_path, language, languages, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rel_path, abs_path, language, languages, root_type, root_start_row, root_start_column, root_end_row, root_end_column, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(rel_path) DO UPDATE SET
             abs_path = excluded.abs_path,
             language = excluded.language,
             languages = excluded.languages,
             root_type = excluded.root_type,
+            root_start_row = excluded.root_start_row,
+            root_start_column = excluded.root_start_column,
+            root_end_row = excluded.root_end_row,
+            root_end_column = excluded.root_end_column,
             node_count = excluded.node_count,
             has_error = excluded.has_error,
             byte_length = excluded.byte_length,
@@ -186,6 +194,10 @@ def _upsert_file_analysis(
             parsed.language,
             languages,
             root_node.type,
+            root_start_row,
+            root_start_column,
+            root_end_row,
+            root_end_column,
             root_node.descendant_count,
             int(root_node.has_error),
             byte_length,
