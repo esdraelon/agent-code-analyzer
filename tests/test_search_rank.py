@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agent_code_analyzer.search_rank import build_embedding_text, normalize_identifier, score_search_candidate
+from agent_code_analyzer.search_scoring import SearchScoringStrategy
 
 
 def test_score_search_candidate_prefers_exact_token_hits_over_loose_matches() -> None:
@@ -58,3 +59,48 @@ def test_build_embedding_text_keeps_structural_hints_together() -> None:
     assert "symbol: KingdomController" in text
     assert "signature: public function importMisc($number = 5)" in text
     assert "skeleton: class KingdomController" in text
+
+
+def test_search_scoring_strategy_breakdown_matches_wrapper() -> None:
+    strategy = SearchScoringStrategy()
+
+    breakdown = strategy.breakdown(
+        query="hello world",
+        base_score=0.42,
+        searchable_text="file path: src/hello.py\nhello world\ndef hello_world(): pass",
+        file_path="src/hello.py",
+        symbol_name="hello_world",
+        unit_type="file",
+        content_text="def hello_world(): pass",
+    )
+
+    assert breakdown.total == strategy.score(
+        "hello world",
+        base_score=0.42,
+        searchable_text="file path: src/hello.py\nhello world\ndef hello_world(): pass",
+        file_path="src/hello.py",
+        symbol_name="hello_world",
+        unit_type="file",
+        content_text="def hello_world(): pass",
+    )
+    assert breakdown.total == score_search_candidate(
+        "hello world",
+        base_score=0.42,
+        searchable_text="file path: src/hello.py\nhello world\ndef hello_world(): pass",
+        file_path="src/hello.py",
+        symbol_name="hello_world",
+        unit_type="file",
+        content_text="def hello_world(): pass",
+    )
+    assert breakdown.generated_multiplier == 1.0
+
+    noisy = strategy.breakdown(
+        query="hello world",
+        searchable_text="file path: vendor/hello.min.js\nhello world\nfunction helloWorld(){return 1}",
+        file_path="vendor/hello.min.js",
+        symbol_name="helloWorld",
+        content_text="function helloWorld(){return 1}",
+    )
+
+    assert noisy.generated_multiplier == 0.75
+    assert noisy.total < breakdown.total

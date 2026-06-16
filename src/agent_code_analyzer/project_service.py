@@ -7,6 +7,7 @@ from . import project_storage as storage
 from .parsing import analyze_file, detect_language
 from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
+from . import project_sync_steps as sync_steps
 
 
 def _sync_qdrant_records(
@@ -30,6 +31,27 @@ def _sync_qdrant_records(
     except Exception:
         # Best-effort secondary index; sqlite remains authoritative.
         pass
+
+
+def _sync_project_file(
+    conn,
+    *,
+    project: str,
+    root_path: Path,
+    resolved_path: Path,
+    indexed_at: str,
+) -> int:
+    analysis = analyze_file(str(resolved_path))
+    _upsert_file_analysis(
+        conn,
+        project=project,
+        root_path=root_path,
+        resolved_path=resolved_path,
+        analysis=analysis,
+        indexed_at=indexed_at,
+        **storage._project_file_snapshot(resolved_path),
+    )
+    return len(analysis["symbols"])
 
 
 def _load_project_metadata(project: str) -> dict[str, Any] | None:
@@ -283,31 +305,18 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
             if refresh:
                 conn.execute("DELETE FROM symbols")
                 conn.execute("DELETE FROM files")
-                from .lexical_index import delete_project as delete_lexical_project
-                delete_lexical_project(conn, project)
-                try:
-                    from .vector_index import get_vector_index
+                sync_steps.clear_project_indexes(conn, project)
 
-                    get_vector_index().delete_project(project)
-                except Exception:
-                    pass
-
-            files = _iter_source_files(root)
+            current_files, _current_stats = sync_steps.scan_source_files(root)
             total_symbols = 0
-            for path in files:
-                from . import projects as projects_api
-                analysis = projects_api.analyze_file(str(path))
-                from . import projects as projects_api
-                projects_api._upsert_file_analysis(
+            for rel_path in sorted(current_files):
+                total_symbols += _sync_project_file(
                     conn,
                     project=project,
                     root_path=root,
-                    resolved_path=path,
-                    analysis=analysis,
+                    resolved_path=current_files[rel_path],
                     indexed_at=indexed_at,
-                    **storage._project_file_snapshot(path),
                 )
-                total_symbols += len(analysis["symbols"])
 
             existing_state = conn.execute(
                 "SELECT created_at FROM project_state WHERE project_name = ?",
@@ -315,52 +324,33 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
             ).fetchone()
             created_at = existing_state["created_at"] if existing_state else indexed_at
             project_languages = ProjectRowMapper.project_languages_from_conn(conn)
-            conn.execute(
-                """
-                INSERT INTO project_state (
-                    project_name, root_path, created_at, updated_at, indexed_at,
-                    file_count, supported_file_count, symbol_count, languages
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(project_name) DO UPDATE SET
-                    root_path = excluded.root_path,
-                    updated_at = excluded.updated_at,
-                    indexed_at = excluded.indexed_at,
-                    file_count = excluded.file_count,
-                    supported_file_count = excluded.supported_file_count,
-                    symbol_count = excluded.symbol_count,
-                    languages = excluded.languages
-                """,
-                (
-                    project,
-                    str(root),
-                    created_at,
-                    indexed_at,
-                    indexed_at,
-                    len(files),
-                    len(files),
-                    total_symbols,
-                    ProjectRowMapper.encode_languages(project_languages),
-                ),
+            sync_steps.write_project_state(
+                conn,
+                project=project,
+                root=root,
+                created_at=created_at,
+                indexed_at=indexed_at,
+                file_count=len(current_files),
+                supported_file_count=len(current_files),
+                symbol_count=total_symbols,
+                languages=project_languages,
             )
 
-    with storage._acquire_locks(storage.METADATA_DB):
-        with storage._connect(storage.METADATA_DB) as conn:
-            ProjectRepository.init_metadata_schema(conn)
-            conn.execute(
-                """
-                UPDATE projects
-                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?, languages = ?
-                WHERE name = ?
-                """,
-                (indexed_at, indexed_at, len(files), len(files), total_symbols, ProjectRowMapper.encode_languages(project_languages), project),
-            )
+    sync_steps.update_metadata_projection(
+        project=project,
+        indexed_at=indexed_at,
+        file_count=len(current_files),
+        supported_file_count=len(current_files),
+        symbol_count=total_symbols,
+        languages=project_languages,
+    )
 
     return {
         "project": project,
         "root_path": str(root),
         "mode": project_data["mode"],
-        "file_count": len(files),
-        "supported_file_count": len(files),
+        "file_count": len(current_files),
+        "supported_file_count": len(current_files),
         "symbol_count": total_symbols,
         "indexed_at": indexed_at,
         "languages": project_languages,
@@ -394,42 +384,22 @@ def sync_project_tree(project: str) -> dict[str, Any]:
                 ).fetchall()
             }
 
-            current_files: dict[str, Path] = {}
-            current_stats: dict[str, dict[str, int]] = {}
-            for path in _iter_source_files(root):
-                rel_path = str(path.relative_to(root))
-                current_files[rel_path] = path
-                current_stats[rel_path] = storage._project_file_snapshot(path)
+            current_files, current_stats = sync_steps.scan_source_files(root)
 
-            current_paths = set(current_files)
-            existing_paths = set(existing_files)
-            deleted_paths = sorted(existing_paths - current_paths)
+            deleted_paths, unchanged_paths, changed_paths = sync_steps.project_sync_diff(
+                existing_files,
+                current_files,
+                current_stats,
+            )
             upserted_paths: list[str] = []
-            unchanged_paths: list[str] = []
 
-            for rel_path in sorted(current_paths):
-                path = current_files[rel_path]
-                snapshot = current_stats[rel_path]
-                existing_row = existing_files.get(rel_path)
-                if (
-                    existing_row is not None
-                    and int(existing_row["file_size"]) == snapshot["file_size"]
-                    and int(existing_row["file_mtime_ns"]) == snapshot["file_mtime_ns"]
-                ):
-                    unchanged_paths.append(rel_path)
-                    continue
-
-                from . import projects as projects_api
-                analysis = projects_api.analyze_file(str(path))
-                from . import projects as projects_api
-                projects_api._upsert_file_analysis(
+            for rel_path in changed_paths:
+                _sync_project_file(
                     conn,
                     project=project,
                     root_path=root,
-                    resolved_path=path,
-                    analysis=analysis,
+                    resolved_path=current_files[rel_path],
                     indexed_at=now,
-                    **snapshot,
                 )
                 upserted_paths.append(rel_path)
 
@@ -437,18 +407,7 @@ def sync_project_tree(project: str) -> dict[str, Any]:
             for rel_path in deleted_paths:
                 row = existing_files[rel_path]
                 file_id = int(row["id"])
-                try:
-                    from .lexical_index import delete_file as delete_lexical_file
-
-                    delete_lexical_file(conn, project, file_id)
-                except Exception:
-                    pass
-                try:
-                    from .vector_index import get_vector_index, _sqlite_file_uri
-
-                    get_vector_index().delete_file(_sqlite_file_uri(project, file_id))
-                except Exception:
-                    pass
+                sync_steps.delete_file_indexes(conn, project, file_id)
                 conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
                 deleted_file_count += 1
 
@@ -471,45 +430,26 @@ def sync_project_tree(project: str) -> dict[str, Any]:
             indexed_at = now
             created_at = existing_state["created_at"] if existing_state else now
             project_languages = ProjectRowMapper.project_languages_from_conn(conn)
-            conn.execute(
-                """
-                INSERT INTO project_state (
-                    project_name, root_path, created_at, updated_at, indexed_at,
-                    file_count, supported_file_count, symbol_count, languages
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(project_name) DO UPDATE SET
-                    root_path = excluded.root_path,
-                    updated_at = excluded.updated_at,
-                    indexed_at = excluded.indexed_at,
-                    file_count = excluded.file_count,
-                    supported_file_count = excluded.supported_file_count,
-                    symbol_count = excluded.symbol_count,
-                    languages = excluded.languages
-                """,
-                (
-                    project,
-                    str(root),
-                    created_at,
-                    indexed_at,
-                    indexed_at,
-                    file_count,
-                    file_count,
-                    symbol_count,
-                    ProjectRowMapper.encode_languages(project_languages),
-                ),
+            sync_steps.write_project_state(
+                conn,
+                project=project,
+                root=root,
+                created_at=created_at,
+                indexed_at=indexed_at,
+                file_count=file_count,
+                supported_file_count=file_count,
+                symbol_count=symbol_count,
+                languages=project_languages,
             )
 
-    with storage._acquire_locks(storage.METADATA_DB):
-        with storage._connect(storage.METADATA_DB) as conn:
-            ProjectRepository.init_metadata_schema(conn)
-            conn.execute(
-                """
-                UPDATE projects
-                SET indexed_at = ?, updated_at = ?, file_count = ?, supported_file_count = ?, symbol_count = ?, languages = ?
-                WHERE name = ?
-                """,
-                (indexed_at, indexed_at, file_count, file_count, symbol_count, ProjectRowMapper.encode_languages(project_languages), project),
-            )
+    sync_steps.update_metadata_projection(
+        project=project,
+        indexed_at=indexed_at,
+        file_count=file_count,
+        supported_file_count=file_count,
+        symbol_count=symbol_count,
+        languages=project_languages,
+    )
 
     return {
         "project": project,
