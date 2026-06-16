@@ -283,6 +283,8 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
             if refresh:
                 conn.execute("DELETE FROM symbols")
                 conn.execute("DELETE FROM files")
+                from .lexical_index import delete_project as delete_lexical_project
+                delete_lexical_project(conn, project)
                 try:
                     from .vector_index import get_vector_index
 
@@ -435,6 +437,12 @@ def sync_project_tree(project: str) -> dict[str, Any]:
             for rel_path in deleted_paths:
                 row = existing_files[rel_path]
                 file_id = int(row["id"])
+                try:
+                    from .lexical_index import delete_file as delete_lexical_file
+
+                    delete_lexical_file(conn, project, file_id)
+                except Exception:
+                    pass
                 try:
                     from .vector_index import get_vector_index, _sqlite_file_uri
 

@@ -267,17 +267,19 @@ Use sqlite as the source of truth for metadata and per-project structural indexe
 
 ### Milestone 8: Add full-codebase embedding search and intent analysis
 
-**Status:** planned
+**Status:** in progress
 
-**Objective:** Replace the current best-effort vector projection with a real embedding-backed search layer that continuously reindexes the entire codebase on file changes, and add agent-driven intent analysis for each component so the analyzer can answer both "what is this code doing?" and "where is the relevant code?" more reliably.
+**Objective:** Replace the current best-effort vector projection with a practical hybrid retrieval layer that combines lexical lookup and semantic similarity so the analyzer can answer both "where is it?" and "what is like it?" reliably.
 
 **Planned shape:**
-- Use a real embedding model instead of the current deterministic hash-derived vector projection.
-- Index the entire codebase in project-scoped chunks, not just opportunistic snippets.
-- Trigger incremental re-embedding from filesystem events so changed files are refreshed automatically.
-- Wire semantic retrieval to complement the lightweight lexical layer from Milestone 7.
-- Add intent-analysis passes that summarize component purpose, responsibilities, invariants, and likely ownership boundaries.
-- Persist the intent analysis in a form that is queryable alongside structural code data.
+- Keep the semantic layer project-scoped and payload-rich.
+- Add a lightweight lexical index for exact tokens, filenames, and identifiers.
+- Merge lexical and semantic results so literal lookups rank before similarity-only matches.
+- Keep the implementation local-first and deterministic enough to test.
+- Defer intent summaries until the core retrieval paths are stable.
+
+**Initial slice:**
+- Build and wire the lexical index, then compare it against the existing semantic path on ORK3 queries.
 
 **Possible tools:**
 - Embedding model provider or local embedding runtime

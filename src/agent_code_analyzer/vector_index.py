@@ -11,12 +11,17 @@ from urllib.parse import quote
 from qdrant_client import QdrantClient, models as qmodels
 
 from . import project_storage as storage
+from .embedding_provider import EmbeddingProvider, get_embedding_provider
 from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
+from .search_rank import build_embedding_text, score_search_candidate, tokenize_text
 
 QDRANT_DEFAULT_URL = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_URL", "http://127.0.0.1:6333")
-QDRANT_DEFAULT_COLLECTION = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_COLLECTION", "agent_code_analyzer_chunks")
-QDRANT_VECTOR_SIZE = int(os.environ.get("AGENT_CODE_ANALYZER_QDRANT_VECTOR_SIZE", "16"))
+QDRANT_DEFAULT_COLLECTION = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_COLLECTION", "agent_code_analyzer_chunks_v2")
+QDRANT_EMBEDDING_MODEL = os.environ.get(
+    "AGENT_CODE_ANALYZER_EMBEDDING_MODEL",
+    "sentence-transformers/all-MiniLM-L6-v2",
+)
 QDRANT_NAMESPACE = uuid.UUID("8d02b10d-0d18-4b93-b3d9-4ff9c1c44c7d")
 
 
@@ -34,11 +39,6 @@ def _sqlite_symbol_uri(project: str, file_id: int, symbol_order: int) -> str:
 
 def _stable_point_id(sqlite_uri: str) -> str:
     return str(uuid.uuid5(QDRANT_NAMESPACE, sqlite_uri))
-
-
-def _text_vector(text: str, size: int = QDRANT_VECTOR_SIZE) -> list[float]:
-    digest = hashlib.sha256(text.encode("utf-8")).digest()
-    return [((digest[index % len(digest)] / 255.0) * 2.0) - 1.0 for index in range(size)]
 
 
 def _content_hash(text: str) -> str:
@@ -98,12 +98,22 @@ class QdrantVectorIndex:
 
     url: str = QDRANT_DEFAULT_URL
     collection_name: str = QDRANT_DEFAULT_COLLECTION
-    vector_size: int = QDRANT_VECTOR_SIZE
+    embedding_model: str = QDRANT_EMBEDDING_MODEL
+    embedding_provider: EmbeddingProvider | None = field(default=None, repr=False)
     _client: QdrantClient | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.embedding_provider is None:
+            self.embedding_provider = get_embedding_provider()
+
+    @property
+    def vector_size(self) -> int:
+        assert self.embedding_provider is not None
+        return int(self.embedding_provider.vector_size)
 
     def client(self) -> QdrantClient:
         if self._client is None:
-            self._client = QdrantClient(url=self.url)
+            self._client = QdrantClient(url=self.url, check_compatibility=False)
         return self._client
 
     def ensure_collection(self) -> None:
@@ -113,6 +123,66 @@ class QdrantVectorIndex:
         client.create_collection(
             collection_name=self.collection_name,
             vectors_config=qmodels.VectorParams(size=self.vector_size, distance=qmodels.Distance.COSINE),
+        )
+
+    def _embed_document(self, text: str) -> list[float]:
+        assert self.embedding_provider is not None
+        return self.embedding_provider.embed_document(text)
+
+    def _embed_query(self, text: str) -> list[float]:
+        assert self.embedding_provider is not None
+        return self.embedding_provider.embed_query(text)
+
+    def _make_point(
+        self,
+        *,
+        project: str,
+        project_root: str,
+        file_id: int,
+        file_path: str,
+        language: str,
+        languages: list[str],
+        indexed_at: str,
+        file_size: int | None,
+        file_mtime_ns: int | None,
+        chunk_text: str,
+        source_kind: str,
+        sqlite_uri: str | None = None,
+        symbol: dict[str, Any] | None = None,
+        is_query: bool = False,
+    ) -> qmodels.PointStruct:
+        if source_kind == "file":
+            payload = self._file_payload(
+                project=project,
+                project_root=project_root,
+                file_id=file_id,
+                file_path=file_path,
+                language=language,
+                languages=languages,
+                indexed_at=indexed_at,
+                file_size=file_size,
+                file_mtime_ns=file_mtime_ns,
+                chunk_text=chunk_text,
+                source_kind=source_kind,
+            )
+        else:
+            assert symbol is not None
+            payload = self._symbol_payload(
+                project=project,
+                project_root=project_root,
+                file_id=file_id,
+                file_path=file_path,
+                file_language=language,
+                file_languages=languages,
+                symbol=symbol,
+                indexed_at=indexed_at,
+                chunk_text=chunk_text,
+            )
+        point_uri = sqlite_uri or str(payload["sqlite_uri"])
+        return qmodels.PointStruct(
+            id=_stable_point_id(point_uri),
+            vector=self._embed_query(chunk_text) if is_query else self._embed_document(chunk_text),
+            payload=payload,
         )
 
     def delete_file(self, sqlite_file_uri: str) -> None:
@@ -255,6 +325,11 @@ class QdrantVectorIndex:
         parsed = analysis["parsed"]
         file_languages = list(analysis.get("languages", [parsed.language]))
         source_text = parsed.source_code
+        file_embedding_text = build_embedding_text(
+            file_path=file_path,
+            skeleton=str(analysis.get("skeleton", "")),
+            source_text=source_text,
+        )
         file_payload = self._file_payload(
             project=project,
             project_root=project_root,
@@ -271,7 +346,7 @@ class QdrantVectorIndex:
         points = [
             qmodels.PointStruct(
                 id=_stable_point_id(file_payload["sqlite_uri"]),
-                vector=_text_vector(source_text, self.vector_size),
+                vector=self._embed_document(file_embedding_text),
                 payload=file_payload,
             )
         ]
@@ -291,10 +366,16 @@ class QdrantVectorIndex:
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
             )
+            symbol_embedding_text = build_embedding_text(
+                file_path=file_path,
+                symbol_name=str(symbol_ordered.get("name", "")),
+                signature=str(symbol_ordered.get("signature", "")),
+                source_text=chunk_text,
+            )
             points.append(
                 qmodels.PointStruct(
                     id=_stable_point_id(payload["sqlite_uri"]),
-                    vector=_text_vector(chunk_text, self.vector_size),
+                    vector=self._embed_document(symbol_embedding_text),
                     payload=payload,
                 )
             )
@@ -325,10 +406,14 @@ class QdrantVectorIndex:
             chunk_text=str(file_record.get("skeleton", "")),
             source_kind="file",
         )
+        file_embedding_text = build_embedding_text(
+            file_path=file_path,
+            skeleton=str(file_record.get("skeleton", "")),
+        )
         points = [
             qmodels.PointStruct(
                 id=_stable_point_id(file_payload["sqlite_uri"]),
-                vector=_text_vector(str(file_record.get("skeleton", "")), self.vector_size),
+                vector=self._embed_document(file_embedding_text),
                 payload=file_payload,
             )
         ]
@@ -347,10 +432,15 @@ class QdrantVectorIndex:
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
             )
+            symbol_embedding_text = build_embedding_text(
+                file_path=file_path,
+                symbol_name=str(symbol_ordered.get("name", "")),
+                signature=chunk_text,
+            )
             points.append(
                 qmodels.PointStruct(
                     id=_stable_point_id(payload["sqlite_uri"]),
-                    vector=_text_vector(chunk_text, self.vector_size),
+                    vector=self._embed_document(symbol_embedding_text),
                     payload=payload,
                 )
             )
@@ -481,7 +571,7 @@ class QdrantVectorIndex:
         query_filter = qmodels.Filter(must=conditions) if conditions else None
         response = self.client().query_points(
             collection_name=self.collection_name,
-            query=_text_vector(needle, self.vector_size),
+            query=self._embed_query(needle),
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
@@ -491,12 +581,32 @@ class QdrantVectorIndex:
         results: list[dict[str, Any]] = []
         for point in points:
             payload = dict(getattr(point, "payload", {}) or {})
-            results.append(
-                {
-                    "score": float(getattr(point, "score", 0.0)),
-                    **payload,
-                }
+            result = {
+                "score": float(getattr(point, "score", 0.0)),
+                **payload,
+            }
+            result["score"] = score_search_candidate(
+                needle,
+                base_score=float(result["score"]),
+                searchable_text=str(result.get("content_text", ""))
+                + " "
+                + str(result.get("chunk_text", ""))
+                + " "
+                + str(result.get("signature", "")),
+                file_path=str(result.get("file_path", "")),
+                symbol_name=str(result.get("symbol_name", "")),
+                unit_type=str(result.get("unit_type", "")),
+                content_text=str(result.get("content_text", "")),
             )
+            results.append(result)
+        results.sort(
+            key=lambda item: (
+                -float(item["score"]),
+                item.get("scope_type") != "symbol",
+                item.get("symbol_name", ""),
+                item.get("file_path", ""),
+            )
+        )
         return {
             "query": needle,
             "project": project,
