@@ -37,5 +37,14 @@ def test_lexical_repository_upsert_fetch_and_delete_file(tmp_path: Path) -> None
         assert rows[0]["symbol_name"] == "hello"
         assert rows[0]["unit_type"] == "method"
 
+        candidate_rows = LexicalRepository.fetch_candidate_documents(
+            conn,
+            query_terms=["hello"],
+            project="demo",
+            scope_type="symbol",
+        )
+        assert len(candidate_rows) == 1
+        assert candidate_rows[0]["symbol_name"] == "hello"
+
         LexicalRepository.delete_file(conn, "demo", 7)
         assert LexicalRepository.fetch_documents(conn, project="demo") == []
