@@ -6,7 +6,8 @@ from typing import Any, Iterable
 from urllib.parse import quote
 
 from . import project_storage as storage
-from .search_rank import query_terms, score_search_candidate, tokenize_text
+from .search_rank import query_terms, tokenize_text
+from .search_scoring import DEFAULT_SEARCH_SCORER
 
 
 def _slug_component(value: str) -> str:
@@ -254,7 +255,7 @@ def sync_analysis(
 
 
 def _score_document(document: dict[str, Any], query_terms_list: list[str], query_text: str) -> float:
-    return score_search_candidate(
+    return DEFAULT_SEARCH_SCORER.score(
         query_text or " ".join(query_terms_list),
         searchable_text=str(document.get("searchable_text", "")),
         file_path=str(document.get("file_path", "")),

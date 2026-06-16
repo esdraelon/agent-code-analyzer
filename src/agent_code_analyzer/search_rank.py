@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+
+from .search_scoring import DEFAULT_SEARCH_SCORER
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _ACRONYM_BOUNDARY_RE = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
@@ -64,35 +65,12 @@ def score_search_candidate(
     unit_type: str = "",
     content_text: str = "",
 ) -> float:
-    query_terms_list, query_text = query_terms(query)
-    if not query_terms_list and not query_text:
-        return float(base_score)
-
-    searchable = searchable_text.lower()
-    symbol = symbol_name.lower()
-    path = file_path.lower()
-    content = content_text.lower()
-    tokens = set(tokenize_text(searchable))
-
-    exact_terms = [term for term in query_terms_list if term in tokens]
-    loose_terms = [term for term in query_terms_list if term in searchable and term not in exact_terms]
-
-    score = float(base_score)
-    if query_terms_list:
-        score += 0.9 * (len(exact_terms) / len(query_terms_list))
-        score += 0.2 * (len(loose_terms) / len(query_terms_list))
-    if query_text and query_text in searchable:
-        score += 0.6
-    if query_text and query_text in symbol:
-        score += 0.4
-    if query_text and query_text in path:
-        score += 0.35
-    if query_terms_list and all(term in path for term in query_terms_list):
-        score += 0.25
-    if query_terms_list and all(term in symbol for term in query_terms_list):
-        score += 0.25
-    if unit_type == "file" and query_terms_list and any(term in path for term in query_terms_list):
-        score += 0.1
-    if is_generated_or_minified(file_path, searchable_text, content_text):
-        score *= 0.75
-    return score
+    return DEFAULT_SEARCH_SCORER.score(
+        query,
+        base_score=base_score,
+        searchable_text=searchable_text,
+        file_path=file_path,
+        symbol_name=symbol_name,
+        unit_type=unit_type,
+        content_text=content_text,
+    )

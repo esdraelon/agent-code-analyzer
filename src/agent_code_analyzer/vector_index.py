@@ -14,7 +14,8 @@ from . import project_storage as storage
 from .embedding_provider import EmbeddingProvider, get_embedding_provider
 from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
-from .search_rank import build_embedding_text, score_search_candidate, tokenize_text
+from .search_rank import build_embedding_text, tokenize_text
+from .search_scoring import DEFAULT_SEARCH_SCORER
 
 QDRANT_DEFAULT_URL = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_URL", "http://127.0.0.1:6333")
 QDRANT_DEFAULT_COLLECTION = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_COLLECTION", "agent_code_analyzer_chunks_v2")
@@ -585,7 +586,7 @@ class QdrantVectorIndex:
                 "score": float(getattr(point, "score", 0.0)),
                 **payload,
             }
-            result["score"] = score_search_candidate(
+            result["score"] = DEFAULT_SEARCH_SCORER.score(
                 needle,
                 base_score=float(result["score"]),
                 searchable_text=str(result.get("content_text", ""))

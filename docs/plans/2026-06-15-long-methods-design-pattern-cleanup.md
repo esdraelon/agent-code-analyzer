@@ -85,6 +85,8 @@ I checked the current branch for long files and long methods. The main hotspots 
 
 ### Task 2: Extract search scoring into a Strategy object
 
+**Status:** complete
+
 **Objective:** Pull the dense scoring rules out of `search_rank.py` so the ranking policy can evolve independently.
 
 **Files:**
