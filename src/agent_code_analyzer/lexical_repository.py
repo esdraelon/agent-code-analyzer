@@ -47,6 +47,11 @@ class LexicalDocument:
     file_path: str
     symbol_name: str
     symbol_type: str
+    root_type: str
+    start_row: int
+    start_column: int
+    end_row: int
+    end_column: int
     content_text: str
     searchable_text: str
     indexed_at: str
@@ -77,6 +82,11 @@ class LexicalRepository:
                 file_path TEXT NOT NULL,
                 symbol_name TEXT NOT NULL DEFAULT '',
                 symbol_type TEXT NOT NULL DEFAULT '',
+                root_type TEXT NOT NULL DEFAULT '',
+                start_row INTEGER NOT NULL DEFAULT 0,
+                start_column INTEGER NOT NULL DEFAULT 0,
+                end_row INTEGER NOT NULL DEFAULT 0,
+                end_column INTEGER NOT NULL DEFAULT 0,
                 content_text TEXT NOT NULL DEFAULT '',
                 searchable_text TEXT NOT NULL,
                 indexed_at TEXT NOT NULL,
@@ -123,8 +133,8 @@ class LexicalRepository:
             """
             INSERT INTO lexical_documents (
                 project_name, file_id, sqlite_uri, sqlite_file_uri, scope_type, unit_type,
-                file_path, symbol_name, symbol_type, content_text, searchable_text, indexed_at, symbol_order
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                file_path, symbol_name, symbol_type, root_type, start_row, start_column, end_row, end_column, content_text, searchable_text, indexed_at, symbol_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_name, sqlite_uri) DO UPDATE SET
                 file_id = excluded.file_id,
                 sqlite_file_uri = excluded.sqlite_file_uri,
@@ -133,6 +143,11 @@ class LexicalRepository:
                 file_path = excluded.file_path,
                 symbol_name = excluded.symbol_name,
                 symbol_type = excluded.symbol_type,
+                root_type = excluded.root_type,
+                start_row = excluded.start_row,
+                start_column = excluded.start_column,
+                end_row = excluded.end_row,
+                end_column = excluded.end_column,
                 content_text = excluded.content_text,
                 searchable_text = excluded.searchable_text,
                 indexed_at = excluded.indexed_at,
@@ -149,6 +164,11 @@ class LexicalRepository:
                 document.file_path,
                 document.symbol_name,
                 document.symbol_type,
+                document.root_type,
+                document.start_row,
+                document.start_column,
+                document.end_row,
+                document.end_column,
                 document.content_text,
                 document.searchable_text,
                 document.indexed_at,
@@ -234,6 +254,12 @@ class LexicalRepository:
         file_uri = sqlite_file_uri(project, file_id)
         source_text = parsed.source_code
         file_rel_path = str(Path(file_path).resolve().relative_to(Path(root_path).resolve()))
+        root_node = parsed.tree.root_node
+        root_type = root_node.type
+        file_start_row = int(root_node.start_point[0])
+        file_start_column = int(root_node.start_point[1])
+        file_end_row = int(root_node.end_point[0])
+        file_end_column = int(root_node.end_point[1])
 
         LexicalRepository.delete_file(conn, project, file_id)
 
@@ -247,6 +273,11 @@ class LexicalRepository:
             file_path=file_rel_path,
             symbol_name="",
             symbol_type="",
+            root_type=root_type,
+            start_row=file_start_row,
+            start_column=file_start_column,
+            end_row=file_end_row,
+            end_column=file_end_column,
             content_text=source_text,
             searchable_text=" ".join(
                 [
@@ -266,6 +297,8 @@ class LexicalRepository:
             symbol_name = str(symbol.get("name", ""))
             symbol_type = str(symbol.get("type", ""))
             signature = str(symbol.get("signature", ""))
+            start_point = symbol.get("start_point") or {"row": 0, "column": 0}
+            end_point = symbol.get("end_point") or start_point
             searchable_text = " ".join(
                 [
                     file_rel_path,
@@ -286,6 +319,11 @@ class LexicalRepository:
                 file_path=file_rel_path,
                 symbol_name=symbol_name,
                 symbol_type=symbol_type,
+                root_type=root_type,
+                start_row=int(start_point.get("row", 0)),
+                start_column=int(start_point.get("column", 0)),
+                end_row=int(end_point.get("row", 0)),
+                end_column=int(end_point.get("column", 0)),
                 content_text=signature,
                 searchable_text=searchable_text,
                 indexed_at=indexed_at,

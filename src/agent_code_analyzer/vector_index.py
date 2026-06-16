@@ -150,6 +150,11 @@ class QdrantVectorIndex:
         file_path: str,
         language: str,
         languages: list[str],
+        root_type: str = "",
+        start_row: int = 0,
+        start_column: int = 0,
+        end_row: int = 0,
+        end_column: int = 0,
         indexed_at: str,
         file_size: int | None,
         file_mtime_ns: int | None,
@@ -167,6 +172,11 @@ class QdrantVectorIndex:
                 file_path=file_path,
                 language=language,
                 languages=languages,
+                root_type=root_type,
+                start_row=start_row,
+                start_column=start_column,
+                end_row=end_row,
+                end_column=end_column,
                 indexed_at=indexed_at,
                 file_size=file_size,
                 file_mtime_ns=file_mtime_ns,
@@ -183,6 +193,7 @@ class QdrantVectorIndex:
                 file_language=language,
                 file_languages=languages,
                 symbol=symbol,
+                root_type=root_type,
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
             )
@@ -243,6 +254,11 @@ class QdrantVectorIndex:
         file_path: str,
         language: str,
         languages: list[str],
+        root_type: str,
+        start_row: int,
+        start_column: int,
+        end_row: int,
+        end_column: int,
         indexed_at: str,
         file_size: int | None,
         file_mtime_ns: int | None,
@@ -258,6 +274,11 @@ class QdrantVectorIndex:
             "file_path": file_path,
             "language": language,
             "languages": languages,
+            "root_type": root_type,
+            "start_row": start_row,
+            "start_column": start_column,
+            "end_row": end_row,
+            "end_column": end_column,
             "scope_type": source_kind,
             "source_kind": source_kind,
             "unit_type": source_kind,
@@ -282,6 +303,7 @@ class QdrantVectorIndex:
         file_language: str,
         file_languages: list[str],
         symbol: dict[str, Any],
+        root_type: str = "",
         indexed_at: str,
         chunk_text: str,
     ) -> dict[str, Any]:
@@ -304,6 +326,7 @@ class QdrantVectorIndex:
             "symbol_order": symbol_order,
             "symbol_name": symbol.get("name", ""),
             "symbol_type": symbol.get("type", ""),
+            "root_type": root_type,
             "signature": symbol.get("signature", ""),
             "start_row": symbol.get("start_point", {}).get("row"),
             "start_column": symbol.get("start_point", {}).get("column"),
@@ -331,11 +354,12 @@ class QdrantVectorIndex:
         file_mtime_ns: int | None,
     ) -> list[qmodels.PointStruct]:
         parsed = analysis["parsed"]
+        root_node = parsed.tree.root_node
         file_languages = list(analysis.get("languages", [parsed.language]))
         source_text = parsed.source_code
         file_embedding_text = build_embedding_text(
             file_path=file_path,
-            skeleton=str(analysis.get("skeleton", "")),
+            skeleton=f"{root_node.type}\n{analysis.get('skeleton', '')}",
             source_text=source_text,
         )
         file_payload = self._file_payload(
@@ -345,6 +369,11 @@ class QdrantVectorIndex:
             file_path=file_path,
             language=parsed.language,
             languages=file_languages,
+            root_type=root_node.type,
+            start_row=int(root_node.start_point[0]),
+            start_column=int(root_node.start_point[1]),
+            end_row=int(root_node.end_point[0]),
+            end_column=int(root_node.end_point[1]),
             indexed_at=indexed_at,
             file_size=file_size,
             file_mtime_ns=file_mtime_ns,
@@ -371,6 +400,7 @@ class QdrantVectorIndex:
                 file_language=parsed.language,
                 file_languages=file_languages,
                 symbol=symbol_ordered,
+                root_type=root_node.type,
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
             )
@@ -408,6 +438,11 @@ class QdrantVectorIndex:
             file_path=file_path,
             language=str(file_record["language"]),
             languages=file_languages,
+            root_type=str(file_record.get("root_type", "")),
+            start_row=int(file_record.get("start_point", {}).get("row", 0)),
+            start_column=int(file_record.get("start_point", {}).get("column", 0)),
+            end_row=int(file_record.get("end_point", {}).get("row", 0)),
+            end_column=int(file_record.get("end_point", {}).get("column", 0)),
             indexed_at=indexed_at,
             file_size=file_record.get("file_size"),
             file_mtime_ns=file_record.get("file_mtime_ns"),
@@ -416,7 +451,7 @@ class QdrantVectorIndex:
         )
         file_embedding_text = build_embedding_text(
             file_path=file_path,
-            skeleton=str(file_record.get("skeleton", "")),
+            skeleton=f"{str(file_record.get('root_type', ''))}\n{str(file_record.get('skeleton', ''))}",
         )
         points = [
             qmodels.PointStruct(
@@ -437,6 +472,7 @@ class QdrantVectorIndex:
                 file_language=str(file_record["language"]),
                 file_languages=file_languages,
                 symbol=symbol_ordered,
+                root_type=str(file_record.get("root_type", "")),
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
             )

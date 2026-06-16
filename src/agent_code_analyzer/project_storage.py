@@ -135,6 +135,10 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
             language TEXT NOT NULL,
             languages TEXT NOT NULL DEFAULT '[]',
             root_type TEXT NOT NULL,
+            root_start_row INTEGER NOT NULL DEFAULT 0,
+            root_start_column INTEGER NOT NULL DEFAULT 0,
+            root_end_row INTEGER NOT NULL DEFAULT 0,
+            root_end_column INTEGER NOT NULL DEFAULT 0,
             node_count INTEGER NOT NULL,
             has_error INTEGER NOT NULL,
             byte_length INTEGER NOT NULL,
@@ -180,6 +184,14 @@ def _ensure_project_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN file_mtime_ns INTEGER NOT NULL DEFAULT 0")
     if "languages" not in columns:
         conn.execute("ALTER TABLE files ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
+    if "root_start_row" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN root_start_row INTEGER NOT NULL DEFAULT 0")
+    if "root_start_column" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN root_start_column INTEGER NOT NULL DEFAULT 0")
+    if "root_end_row" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN root_end_row INTEGER NOT NULL DEFAULT 0")
+    if "root_end_column" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN root_end_column INTEGER NOT NULL DEFAULT 0")
 
     symbol_columns = {row[1] for row in conn.execute("PRAGMA table_info(symbols)").fetchall()}
     if "languages" not in symbol_columns:

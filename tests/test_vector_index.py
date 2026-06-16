@@ -102,6 +102,9 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
     assert file_point.payload["unit_type"] == "file"
     assert file_point.payload["sqlite_uri"] == "sqlite://projects/demo/files/7"
     assert file_point.payload["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
+    assert file_point.payload["root_type"]
+    assert file_point.payload["start_row"] == 0
+    assert file_point.payload["end_row"] >= file_point.payload["start_row"]
     assert file_point.payload["content_text"]
 
     symbol_point = points[1]
@@ -110,6 +113,8 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
     assert symbol_point.payload["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
     assert symbol_point.payload["sqlite_uri"].startswith("sqlite://projects/demo/files/7/symbols/")
     assert symbol_point.payload["symbol_name"] == "hello"
+    assert symbol_point.payload["start_row"] == 0
+    assert symbol_point.payload["end_row"] >= symbol_point.payload["start_row"]
 
 
 def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(tmp_path: Path, monkeypatch) -> None:
@@ -135,9 +140,11 @@ def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(
 
     points = fake_client.upsert_calls[0]["points"]
     assert points[0].payload["sqlite_file_uri"] == "sqlite://projects/existing/files/1"
+    assert points[0].payload["root_type"]
     if len(points) > 1:
         assert points[1].payload["sqlite_symbol_id"] == 1
         assert points[1].payload["sqlite_file_uri"] == "sqlite://projects/existing/files/1"
+        assert points[1].payload["start_row"] == 0
 
 
 def test_semantic_search_filters_and_returns_payloads(monkeypatch) -> None:
@@ -170,6 +177,8 @@ def test_semantic_search_filters_and_returns_payloads(monkeypatch) -> None:
                         "file_path": "src/app.py",
                         "symbol_name": "hello",
                         "content_text": "def hello(name):",
+                        "start_row": 0,
+                        "end_row": 0,
                     },
                 )
             ]
@@ -187,6 +196,7 @@ def test_semantic_search_filters_and_returns_payloads(monkeypatch) -> None:
     assert result["project"] == "demo"
     assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/7/symbols/0"
     assert result["results"][0]["symbol_name"] == "hello"
+    assert result["results"][0]["start_row"] == 0
 
 
 def test_sync_analysis_round_trips_symbol_unit_type_into_search_results(tmp_path: Path, monkeypatch) -> None:
