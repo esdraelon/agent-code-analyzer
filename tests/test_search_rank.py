@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_code_analyzer.search_rank import build_embedding_text, score_search_candidate
+from agent_code_analyzer.search_rank import build_embedding_text, normalize_identifier, score_search_candidate
 
 
 def test_score_search_candidate_prefers_exact_token_hits_over_loose_matches() -> None:
@@ -39,6 +39,10 @@ def test_score_search_candidate_penalizes_generated_and_minified_files() -> None
     )
 
     assert normal > noisy
+
+
+def test_normalize_identifier_splits_acronyms_and_digits() -> None:
+    assert normalize_identifier("XMLHttpRequest2") == ["xml", "http", "request", "2"]
 
 
 def test_build_embedding_text_keeps_structural_hints_together() -> None:

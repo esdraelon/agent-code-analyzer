@@ -4,6 +4,8 @@ import re
 from typing import Iterable
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_ACRONYM_BOUNDARY_RE = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
+_DIGIT_BOUNDARY_RE = re.compile(r"(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])")
 _NON_WORD_RE = re.compile(r"[^A-Za-z0-9]+")
 _GENERATED_PATH_RE = re.compile(
     r"(?:^|[\\/])(?:generated|gen|dist|build|vendor)(?:[\\/]|$)|(?:\.min\.)|(?:\.generated\.)",
@@ -16,7 +18,9 @@ def normalize_identifier(identifier: str) -> list[str]:
     for chunk in _NON_WORD_RE.split(identifier):
         if not chunk:
             continue
-        split_chunk = _CAMEL_BOUNDARY_RE.sub(" ", chunk)
+        split_chunk = _DIGIT_BOUNDARY_RE.sub(" ", chunk)
+        split_chunk = _ACRONYM_BOUNDARY_RE.sub(" ", split_chunk)
+        split_chunk = _CAMEL_BOUNDARY_RE.sub(" ", split_chunk)
         pieces.extend(part.lower() for part in split_chunk.split() if part)
     return pieces
 

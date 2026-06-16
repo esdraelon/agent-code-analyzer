@@ -114,3 +114,40 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
         "sqlite://projects/demo/files/1",
         "sqlite://projects/demo/files/2",
     ]
+
+
+def test_lexical_search_handles_acronym_identifiers(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    file_path = root / "src" / "http_service.py"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text(
+        "def XMLHttpRequest2(url):\n    return url\n",
+        encoding="utf-8",
+    )
+
+    db_path = storage._project_db_path("demo")
+    with storage._connect(db_path) as conn:
+        storage._ensure_project_schema(conn)
+        analysis = analyze_file(str(file_path))
+
+        from agent_code_analyzer.lexical_index import sync_analysis, search
+
+        sync_analysis(
+            conn,
+            project="demo",
+            root_path=root,
+            file_id=11,
+            file_path=str(file_path),
+            analysis=analysis,
+            indexed_at="2026-06-15T12:00:00Z",
+            file_size=file_path.stat().st_size,
+            file_mtime_ns=file_path.stat().st_mtime_ns,
+        )
+
+        result = search(conn, "xml http request", project="demo", scope_type="symbol", limit=5)
+
+        assert result["results"][0]["symbol_name"] == "XMLHttpRequest2"
+        assert result["results"][0]["scope_type"] == "symbol"
