@@ -97,3 +97,58 @@ def test_directory_ingest_skips_unsupported_files(tmp_path: Path, monkeypatch) -
             ("mixed",),
         ).fetchone()
         assert project_row == (1, 1, 1)
+
+
+def test_sync_project_tree_tracks_changed_and_deleted_files(tmp_path: Path, monkeypatch) -> None:
+    projects = _isolate_project_state(tmp_path, monkeypatch)
+
+    class FakeVectorIndex:
+        def __init__(self) -> None:
+            self.sync_calls: list[dict[str, Any]] = []
+            self.deleted_files: list[str] = []
+            self.deleted_projects: list[str] = []
+
+        def sync_records(self, **kwargs) -> dict[str, Any]:
+            self.sync_calls.append(kwargs)
+            return {"points": len(kwargs.get("symbol_rows", [])) + 1}
+
+        def delete_file(self, sqlite_uri: str) -> None:
+            self.deleted_files.append(sqlite_uri)
+
+        def delete_project(self, project: str) -> None:
+            self.deleted_projects.append(project)
+
+    fake_index = FakeVectorIndex()
+    monkeypatch.setattr("agent_code_analyzer.vector_index.get_vector_index", lambda: fake_index)
+
+    root = tmp_path / "sync"
+    root.mkdir()
+    alpha = root / "alpha.py"
+    beta = root / "beta.py"
+    alpha.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    beta.write_text("def beta():\n    return 2\n", encoding="utf-8")
+
+    added = add_project("sync", str(root), mode="directory")
+    assert added["ingest"]["file_count"] == 2
+
+    beta.unlink()
+    alpha.write_text("def alpha():\n    return 10\n", encoding="utf-8")
+
+    summary = projects.sync_project_tree("sync")
+
+    assert summary["changed_file_count"] == 1
+    assert summary["deleted_file_count"] == 1
+    assert summary["unchanged_file_count"] == 0
+    assert fake_index.deleted_files == ["sqlite://projects/sync/files/2"]
+
+    db_path = Path(added["db_path"])
+    with sqlite3.connect(db_path) as conn:
+        file_rows = conn.execute("SELECT rel_path FROM files ORDER BY rel_path ASC").fetchall()
+        assert [row[0] for row in file_rows] == ["alpha.py"]
+        symbol_rows = conn.execute("SELECT name FROM symbols ORDER BY id ASC").fetchall()
+        assert [row[0] for row in symbol_rows] == ["alpha"]
+        project_state = conn.execute(
+            "SELECT file_count, supported_file_count, symbol_count FROM project_state WHERE project_name = ?",
+            ("sync",),
+        ).fetchone()
+        assert project_state == (1, 1, 1)
