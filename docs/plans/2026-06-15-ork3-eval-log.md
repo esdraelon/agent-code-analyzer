@@ -1,6 +1,6 @@
-# ORK3 Integration Evaluation Log
+# Code Analyzer Integration Evaluation Log
 
-Use this file to track ORK3 benchmark responses during development of the agent-code-analyzer retrieval and intent changes.
+Use this file to track benchmark responses during development of the agent-code-analyzer retrieval and intent changes.
 
 ## Entry format
 
@@ -39,14 +39,29 @@ Use this file to track ORK3 benchmark responses during development of the agent-
 - **Date/time:** `2026-06-15 19:51 CDT`
 - **Plan step:** `Hybrid ranking + Tree-sitter isolation update on current dev branch`
 - **Relevant commit:** `working tree @ 6bab01c`
-- **Relevant branch:** `feat/ork3-hybrid-ranking-tuning`
+- **Relevant branch:** `feat/hybrid-ranking-tuning`
 - **Query:** `mysql_real_escape_string`; `startup.php`; `common helper`
-- **Tool call:** `uv run pytest -q`; `uv run python ... search_code(project="ORK3")`; `mcp_agent_code_analyzer_semantic_search(..., project="ORK3")`
-- **Baseline notes:** `Live MCP semantic_search on ORK3 was still noisy on the same queries: broad minified-symbol hits and weak anchoring remained visible in the top 5 for mysql_real_escape_string/setup guard and common helper barrel DB LOG.`
-- **Candidate notes:** `Current working-tree search_code on ORK3 is materially better: mysql_real_escape_string now ranks Controller_Admin / Controller_KingdomAjax / Controller_Park ahead of unrelated minified blobs, startup.php now resolves to orkui/index.php and related entrypoints, and common helper stays on jquery-ui / ajax support code rather than stray fullcalendar internals.`
+- **Tool call:** `uv run pytest -q`; `uv run python ... search_code`; `mcp_agent_code_analyzer_semantic_search(...)`
+- **Baseline notes:** `Live MCP semantic_search was still noisy on the same queries: broad minified-symbol hits and weak anchoring remained visible in the top 5 for mysql_real_escape_string/setup guard and common helper barrel DB LOG.`
+- **Candidate notes:** `Current working-tree search_code is materially better: mysql_real_escape_string now ranks Controller_Admin / Controller_KingdomAjax / Controller_Park ahead of unrelated minified blobs, startup.php now resolves to orkui/index.php and related entrypoints, and common helper stays on jquery-ui / ajax support code rather than stray fullcalendar internals.`
 - **Scope score:** `2`
 - **Anchoring score:** `2`
 - **Usefulness score:** `2`
 - **Compactness score:** `2`
 - **Decision:** `pass with follow-up`
-- **Follow-up needed:** `Reload the live MCP server against this branch and re-run the same ORK3 queries to confirm the improved ranking is reflected outside the local terminal run.`
+- **Follow-up needed:** `Reload the live MCP server against this branch and re-run the same queries to confirm the improved ranking is reflected outside the local terminal run.`
+
+- **Date/time:** `2026-06-15 10:57 CDT`
+- **Plan step:** `Milestone 6 / Task 7 preflight baseline`
+- **Relevant commit:** `9f1e6e9`
+- **Relevant branch:** `docs/preflight-baseline`
+- **Query:** `Establish a preflight structural snapshot for startup.php and system/lib/ork3/common.php before the first comparison.`
+- **Tool call:** `parse_source(startup.php); list_code_symbols(system/lib/ork3/common.php); read_file_excerpt(startup.php:1-20); read_file_excerpt(system/lib/ork3/common.php:96-118)`
+- **Baseline notes:** `startup.php currently exposes only mysql_real_escape_string() and the system setup guard; system/lib/ork3/common.php opens with global DB/LOG wiring, Yapo table handles, and a large Common helper barrel. This is a useful known baseline for later boundary comparisons.`
+- **Candidate notes:** `N/A — baseline only`
+- **Scope score:** `2`
+- **Anchoring score:** `2`
+- **Usefulness score:** `2`
+- **Compactness score:** `2`
+- **Decision:** `pass`
+- **Follow-up needed:** `Rerun the same structural snapshot after the next candidate change, and retry semantic_search once the analyzer wrapper is healthy enough to produce retrieval results.`
