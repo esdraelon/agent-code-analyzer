@@ -295,12 +295,33 @@ Lexical search is the cheapest high-signal win in the roadmap. It gives predicta
 
 ### Milestone 8: Add full-codebase embedding search
 
-**Status:** planned
+**Status:** in progress
 
 **Objective:** Replace the current best-effort vector projection with a practical semantic retrieval layer that can search the whole codebase using real embeddings instead of hash-derived placeholders.
 
 **Why this is separate from milestone 7:**
 Lexical search handles literal precision; this milestone handles semantic recall. The two layers should cooperate, not compete.
+
+**Implemented so far:**
+- A real embedding provider exists behind `src/agent_code_analyzer/embedding_provider.py`.
+- `src/agent_code_analyzer/vector_index.py` now emits project-scoped Qdrant points with stable chunk identifiers.
+- File-level and symbol-level chunks carry source, path, signature, skeleton, and project metadata.
+- Project sync and watcher paths attempt best-effort vector refresh/delete alongside the sqlite source of truth.
+- `projects.search_code()` merges lexical and semantic results and keeps the public search surface unchanged.
+
+**Still to finish:**
+- Compare the hybrid output against the benchmark queries and capture the timing/quality deltas.
+  - Use the repeatable snapshot command as the checkpoint, not an ad hoc one-off run.
+  - Compare the newest snapshot against the previous snapshot and keep the time series growing forward.
+  - Record both result quality and the timing breakdown so a quality gain does not hide a latency regression.
+- Decide whether any additional chunking or metadata refinements are needed for the remaining semantic cases.
+  - Default preference is to keep *both* file chunks and symbol chunks.
+  - File chunks should preserve project/file/scope context.
+  - Symbol chunks should preserve Tree-sitter symbol identity and line-range linkage.
+  - Any extra refinement should be driven by a specific miss in the benchmark set, not by abstraction alone.
+- Tighten the refresh / bootstrap story if any edge cases show up during broader integration runs.
+  - Verify fswatch-triggered refreshes propagate through the sqlite source of truth, lexical index, and best-effort Qdrant projection.
+  - Confirm bootstrap and incremental sync stay idempotent across repeated runs.
 
 **Detailed shape:**
 - Replace the current hash-derived vectors with a real embedding model.
@@ -309,19 +330,22 @@ Lexical search handles literal precision; this milestone handles semantic recall
   - symbol signatures
   - file path context
   - AST skeleton or other structural hints
+  - file-level chunks and symbol-level chunks both retained, so lexical/file lookup and fine-grained symbol lookup stay available
 - Keep chunk identifiers stable so reindexing and incremental refresh remain deterministic.
 - Keep the semantic layer project-scoped and payload-rich.
 - Keep lexical and semantic retrieval separate, then merge their results at query time.
 - Rank literal lexical hits before similarity-only matches when the query clearly contains exact tokens.
 - Trigger embedding refreshes from filesystem events so changed files stay current.
+- Preserve sqlite:// traceability in result payloads so both lexical and semantic hits can be traced back to the authoritative sqlite record.
+- Link Qdrant payloads to Tree-sitter metadata such as symbol name, symbol type, start/end row/column, signature, file path, and project URI.
 
 **Implementation slices:**
-1. Lock the embedding provider interface.
-2. Decide the chunking strategy and metadata shape.
-3. Build the embedding index / point builder around stable IDs.
-4. Wire incremental refresh into project sync and watcher events.
-5. Fuse lexical and semantic retrieval into a predictable result order.
-6. Compare the hybrid output against the benchmark queries.
+1. Lock the embedding provider interface. ✅
+2. Decide the chunking strategy and metadata shape. ✅
+3. Build the embedding index / point builder around stable IDs. ✅
+4. Wire incremental refresh into project sync and watcher events. ✅
+5. Fuse lexical and semantic retrieval into a predictable result order. ✅
+6. Compare the hybrid output against the benchmark queries. ⬜
 
 **Initial slice:**
 - Build and wire the lexical index first, then compare it against the existing semantic path on the benchmark queries.

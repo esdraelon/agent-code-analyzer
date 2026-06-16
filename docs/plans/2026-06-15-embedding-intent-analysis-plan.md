@@ -7,6 +7,9 @@
 **Architecture:**
 Use sqlite as the source of truth for project/file/symbol metadata, and use the vector layer as a project-scoped retrieval index on top of that data. Split retrieval into two paths: exact/lexical search for precise matching, and embedding search for semantic similarity. Trigger both incremental embedding refreshes and intent-analysis refreshes from filesystem change events so the index stays current without requiring manual reindexing.
 
+**Milestone checkpoint tool:**
+Use `uv run python scripts/ork3_eval_snapshot.py` as the repeatable lexical benchmark capture for this plan. Record each run in both `docs/plans/2026-06-15-ork3-eval-log.md` and `docs/plans/ork3-eval-snapshots.jsonl` so milestone changes can be compared against an actual history of dated snapshots, branch/commit metadata, timing logs, and top hits.
+
 **Tech Stack:**
 - Python 3.11+
 - sqlite3
@@ -39,7 +42,7 @@ This plan introduces two new capabilities:
 ## Milestone 6: Full-codebase embedding search and intent analysis
 
 **Status:** merged
-**Note:** The initial ranking and hybrid-search pass landed and was merged on the feature branch; the remaining work below is now follow-up hardening and search-quality refinement.
+**Note:** The initial ranking and hybrid-search pass landed and was merged on the feature branch; the lexical quality branch has since been merged to main, and the embedding/search groundwork now in progress covers real embeddings, stable chunk IDs, and project-scoped Qdrant refreshes. The remaining work below is now follow-up hardening and search-quality refinement.
 
 **Development verification:**
 - Run the ORK3 integration-eval skill during implementation, not just after the milestone lands.

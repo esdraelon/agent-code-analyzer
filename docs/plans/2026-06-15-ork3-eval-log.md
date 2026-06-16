@@ -34,6 +34,81 @@ Use this file to track benchmark responses during development of the agent-code-
 
 ## Log
 
+### 2026-06-16 13:53 CDT
+
+- **Date/time:** `2026-06-16 13:53 CDT`
+- **Plan step:** `Repeatable ORK3 lexical snapshot capture`
+- **Relevant commit:** `06dfd94c335a873f9942b9cbc4eae881adadf22d`
+- **Relevant branch:** `main`
+- **Project:** `ORK3`
+- **Query:** `mysql_real_escape_string`; `startup.php`; `common helper`
+- **Tool call:** `uv run python scripts/ork3_eval_snapshot.py`
+- **Baseline notes:** `This is the current snapshot in the time series; compare it to the previous entries for trend analysis.`
+- **Candidate notes:** `Captured live retrieval results, timing logs, and top hits for the fixed ORK3 lexical benchmark set.`
+- **Scope score:** `2`
+- **Anchoring score:** `2`
+- **Usefulness score:** `2`
+- **Compactness score:** `2`
+- **Decision:** `pass`
+- **Follow-up needed:** `Repeat the same command after each lexical milestone so the trend line stays comparable.`
+
+**Benchmark details**
+- `mysql_real_escape_string`
+  - elapsed_ms: `9997.858`
+  - result_count: `5`
+  - timing: `{'query': 'mysql_real_escape_string', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 1055, 'matched': 1055, 'candidate_ms': 593.604, 'scoring_ms': 855.147, 'sort_ms': 0.974, 'total_ms': 1449.869}`
+  - top_hits: `[{'sqlite_uri': 'sqlite://projects/ORK3/files/2667/symbols/0', 'symbol_name': 'Controller_Admin', 'scope_type': 'symbol', 'unit_type': 'class', 'score': 2.9000000000000004, 'file_path': 'orkui/controller/controller.Admin.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2678/symbols/0', 'symbol_name': 'Controller_KingdomAjax', 'scope_type': 'symbol', 'unit_type': 'class', 'score': 2.4000000000000004, 'file_path': 'orkui/controller/controller.KingdomAjax.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2681/symbols/0', 'symbol_name': 'Controller_Park', 'scope_type': 'symbol', 'unit_type': 'class', 'score': 2.233333333333334, 'file_path': 'orkui/controller/controller.Park.php'}]`
+- `startup.php`
+  - elapsed_ms: `253.159`
+  - result_count: `5`
+  - timing: `{'query': 'startup.php', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 666, 'matched': 666, 'candidate_ms': 86.17, 'scoring_ms': 94.675, 'sort_ms': 0.786, 'total_ms': 181.714}`
+  - top_hits: `[{'sqlite_uri': 'sqlite://projects/ORK3/files/2695/symbols/0', 'symbol_name': 'required_parameter_count', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 2.9000000000000004, 'file_path': 'orkui/index.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2583/symbols/2', 'symbol_name': 'AddAuthorization', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 1.25, 'file_path': 'orkservice/Authorization/AuthorizationService.function.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2573/symbols/32', 'symbol_name': 'AddCacheLine', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 1.0833333333333333, 'file_path': 'import/import.primary.php'}]`
+- `common helper`
+  - elapsed_ms: `276.872`
+  - result_count: `5`
+  - timing: `{'query': 'common helper', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 339, 'matched': 339, 'candidate_ms': 118.306, 'scoring_ms': 113.569, 'sort_ms': 0.386, 'total_ms': 232.335}`
+  - top_hits: `[{'sqlite_uri': 'sqlite://projects/ORK3/files/2999/symbols/8', 'symbol_name': 'Datepicker', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 2.1, 'file_path': 'orkui/template/default/script/development-bundle/ui/jquery-ui-1.8.18.custom.js'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2999/symbols/17', 'symbol_name': '_normalizeArguments', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 1.5999999999999999, 'file_path': 'orkui/template/default/script/development-bundle/ui/jquery-ui-1.8.18.custom.js'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2901/symbols/25', 'symbol_name': 'addToPrefiltersOrTransports', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 1.4333333333333333, 'file_path': 'orkui/template/default/script/development-bundle/jquery-1.7.1.js'}]`
+
+### 2026-06-16 13:52 CDT
+
+- **Project:** `ORK3`
+- **Branch:** `main`
+- **Commit:** `06dfd94c335a873f9942b9cbc4eae881adadf22d`
+- **Dirty:** `True`
+- **Scope type:** `symbol`
+- **Limit:** `5`
+- **Queries:**
+  - `mysql_real_escape_string`
+    - elapsed_ms: `10233.307`
+    - result_count: `5`
+    - timing: `{'query': 'mysql_real_escape_string', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 1055, 'matched': 1055, 'candidate_ms': 653.659, 'scoring_ms': 874.989, 'sort_ms': 0.962, 'total_ms': 1529.763}`
+  - `startup.php`
+    - elapsed_ms: `255.342`
+    - result_count: `5`
+    - timing: `{'query': 'startup.php', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 666, 'matched': 666, 'candidate_ms': 88.266, 'scoring_ms': 100.243, 'sort_ms': 0.714, 'total_ms': 189.342}`
+  - `common helper`
+    - elapsed_ms: `289.257`
+    - result_count: `5`
+    - timing: `{'query': 'common helper', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 339, 'matched': 339, 'candidate_ms': 114.943, 'scoring_ms': 111.713, 'sort_ms': 0.388, 'total_ms': 227.141}`
+
+### 2026-06-16
+
+- **Date/time:** `2026-06-16 13:43 CDT`
+- **Plan step:** `Verify live ORK3 lexical integration logging after timing instrumentation`
+- **Relevant commit:** `working tree`
+- **Relevant branch:** `main`
+- **Project:** `ORK3`
+- **Query:** `mysql_real_escape_string`; `common helper`
+- **Tool call:** `uv run python -c '... projects.search_code(...) ...'`
+- **Baseline notes:** `Captured live lexical timing output from the integrated search path against ORK3 while running two benchmark queries.`
+- **Candidate notes:** `Two INFO log lines were captured by the temporary logging handler, one per query, including candidate_ms, scoring_ms, sort_ms, and total_ms. The ORK3 results were also returned normally, confirming the logging path did not break retrieval.`
+- **Usefulness score:** `2`
+- **Scope score:** `2`
+- **Anchoring score:** `2`
+- **Compactness score:** `2`
+- **Decision:** `pass`
+- **Follow-up needed:** `Repeat the same benchmark after later lexical-ranking changes to compare timing deltas over time.`
+
 ### 2026-06-15
 
 - **Date/time:** `2026-06-15 19:51 CDT`
