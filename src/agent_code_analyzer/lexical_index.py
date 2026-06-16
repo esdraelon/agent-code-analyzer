@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote
 
 from . import project_storage as storage
-
-_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_NON_WORD_RE = re.compile(r"[^A-Za-z0-9]+")
+from .search_rank import query_terms, score_search_candidate, tokenize_text
 
 
 def _slug_component(value: str) -> str:
@@ -25,27 +22,15 @@ def _sqlite_symbol_uri(project: str, file_id: int, symbol_order: int) -> str:
 
 
 def _normalize_identifier(identifier: str) -> list[str]:
-    pieces: list[str] = []
-    for chunk in _NON_WORD_RE.split(identifier):
-        if not chunk:
-            continue
-        split_chunk = _CAMEL_BOUNDARY_RE.sub(" ", chunk)
-        pieces.extend(part.lower() for part in split_chunk.split() if part)
-    return pieces
+    return tokenize_text(identifier)
 
 
 def _tokenize(text: str) -> list[str]:
-    tokens: list[str] = []
-    for raw in _NON_WORD_RE.split(text):
-        if not raw:
-            continue
-        tokens.extend(_normalize_identifier(raw))
-    return tokens
+    return tokenize_text(text)
 
 
 def _normalize_query(query: str) -> tuple[list[str], str]:
-    lowered = query.strip().lower()
-    return _tokenize(query), lowered
+    return query_terms(query)
 
 
 def _symbol_unit_type(symbol_type: str) -> str:
@@ -268,34 +253,15 @@ def sync_analysis(
     }
 
 
-def _score_document(document: dict[str, Any], query_terms: list[str], query_text: str) -> float:
-    searchable = str(document.get("searchable_text", "")).lower()
-    symbol_name = str(document.get("symbol_name", "")).lower()
-    file_path = str(document.get("file_path", "")).lower()
-    unit_type = str(document.get("unit_type", "")).lower()
-
-    content_matches = [term for term in query_terms if term in searchable]
-    name_matches = [term for term in query_terms if term in symbol_name]
-    path_matches = [term for term in query_terms if term in file_path]
-
-    score = 0.0
-    if query_terms:
-        score += float(len(content_matches)) / float(len(query_terms))
-        score += 0.75 * float(len(name_matches))
-        score += 0.5 * float(len(path_matches))
-    if query_text and query_text in searchable:
-        score += 1.5
-    if query_text and query_text in symbol_name:
-        score += 1.0
-    if query_text and query_text in file_path:
-        score += 0.75
-    if query_terms and all(term in file_path for term in query_terms):
-        score += 0.5
-    if query_terms and all(term in symbol_name for term in query_terms):
-        score += 0.5
-    if unit_type == "file" and query_terms and any(term in file_path for term in query_terms):
-        score += 0.25
-    return score
+def _score_document(document: dict[str, Any], query_terms_list: list[str], query_text: str) -> float:
+    return score_search_candidate(
+        query_text or " ".join(query_terms_list),
+        searchable_text=str(document.get("searchable_text", "")),
+        file_path=str(document.get("file_path", "")),
+        symbol_name=str(document.get("symbol_name", "")),
+        unit_type=str(document.get("unit_type", "")),
+        content_text=str(document.get("content_text", "")),
+    )
 
 
 def search(

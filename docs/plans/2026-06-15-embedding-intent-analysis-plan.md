@@ -2,7 +2,7 @@
 
 > **For Hermes:** Use `subagent-driven-development` to implement this plan task-by-task.
 
-**Goal:** Replace the current hash-based vector placeholder with a real embedding-backed search layer that continuously indexes the entire codebase, and add intent analysis so the analyzer can summarize what each component is for as well as locate relevant code.
+**Goal:** Keep Tree-sitter as the structural anchor and improve lexical + semantic retrieval as a high-signal addendum, so the model sees only the smallest relevant source slices instead of large grep/find dumps.
 
 **Architecture:**
 Use sqlite as the source of truth for project/file/symbol metadata, and use the vector layer as a project-scoped retrieval index on top of that data. Split retrieval into two paths: exact/lexical search for precise matching, and embedding search for semantic similarity. Trigger both incremental embedding refreshes and intent-analysis refreshes from filesystem change events so the index stays current without requiring manual reindexing.
@@ -48,7 +48,11 @@ This plan introduces two new capabilities:
 **Objective:** Build a real vector-backed retrieval system for the full codebase and add intent-analysis artifacts that explain component purpose and ownership boundaries.
 
 **Planned shape:**
+- Keep Tree-sitter calls separate from retrieval: use structural tools to shortlist files/symbols, then apply lexical and semantic search as addenda.
 - Replace the current hash-derived vectors with a real embedding model.
+- Embed richer structural context, not just raw source, so file path, symbol name, signature, and skeleton all contribute to the vector.
+- Rank lexical hits with exact identifier/token matches ahead of loose substring hits.
+- Penalize generated/minified content so it does not swamp useful code.
 - Index the entire codebase in project-scoped chunks.
 - Reindex changed files automatically from filesystem events.
 - Keep exact search and semantic search as separate retrieval modes.

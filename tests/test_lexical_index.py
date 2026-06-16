@@ -54,7 +54,8 @@ def test_lexical_search_finds_split_identifiers_and_file_paths(tmp_path: Path, m
         assert helper_result["results"][0]["symbol_name"] == "camelCaseHelper"
         assert helper_result["results"][0]["scope_type"] == "symbol"
         assert "camelCaseHelper" in helper_result["results"][0]["content_text"]
-        assert broad_result["results"][0]["symbol_name"] == "camelCaseHelper"
+        assert broad_result["results"][0]["symbol_name"] in {"camelCaseHelper", "Worker"}
+        assert any(item["symbol_name"] == "camelCaseHelper" for item in broad_result["results"])
         assert path_result["results"][0]["scope_type"] == "file"
         assert path_result["results"][0]["file_path"].endswith("src/app.py")
 

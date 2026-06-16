@@ -48,6 +48,18 @@ class FakeBestEffortIndex:
         self.synced_files.append(kwargs)
 
 
+class FakeEmbeddingProvider:
+    vector_size = 3
+
+    def embed_document(self, text: str) -> list[float]:
+        base = float(len(text) % 7)
+        return [base, base + 1.0, base + 2.0]
+
+    def embed_query(self, text: str) -> list[float]:
+        base = float(len(text) % 5)
+        return [base + 3.0, base + 4.0, base + 5.0]
+
+
 def _isolate_project_state(tmp_path: Path, monkeypatch) -> None:
     state_dir = tmp_path / "state"
     monkeypatch.setattr(projects_module, "DATA_DIR", state_dir)
@@ -64,8 +76,8 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
 
     analysis = analyze_file(str(file_path))
     fake_client = FakeQdrantClient()
-    index = QdrantVectorIndex(url="http://example.test")
-    index._client = fake_client
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
 
     result = index.sync_analysis(
         project="demo",
@@ -112,8 +124,8 @@ def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(
     add_project("existing", str(root), mode="directory")
 
     fake_client = FakeQdrantClient()
-    index = QdrantVectorIndex(url="http://example.test")
-    index._client = fake_client
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
 
     summary = index.bootstrap_project("existing")
     assert summary["project"] == "existing"
@@ -130,8 +142,8 @@ def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(
 
 def test_semantic_search_filters_and_returns_payloads(monkeypatch) -> None:
     fake_client = FakeQdrantClient()
-    index = QdrantVectorIndex(url="http://example.test")
-    index._client = fake_client
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
 
     captured: dict[str, Any] = {}
 
@@ -211,8 +223,8 @@ def test_sync_analysis_round_trips_symbol_unit_type_into_search_results(tmp_path
 
     monkeypatch.setattr(fake_client, "query_points", fake_query_points)
 
-    index = QdrantVectorIndex(url="http://example.test")
-    index._client = fake_client
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
 
     sync_result = index.sync_analysis(
         project="demo",
@@ -235,3 +247,111 @@ def test_sync_analysis_round_trips_symbol_unit_type_into_search_results(tmp_path
     assert search_result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/7/symbols/0"
     assert search_result["results"][0]["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
     assert search_result["results"][0]["symbol_name"] == "hello"
+
+
+def test_qdrant_semantic_search_reranks_exact_identifier_hits_above_generated_noise(monkeypatch) -> None:
+    class FakeEmbeddingProvider:
+        vector_size = 3
+
+        def embed_document(self, text: str) -> list[float]:
+            return [1.0, 2.0, 3.0]
+
+        def embed_query(self, text: str) -> list[float]:
+            return [4.0, 5.0, 6.0]
+
+    fake_client = FakeQdrantClient()
+
+    class FakePoint:
+        def __init__(self, score: float, payload: dict[str, Any]) -> None:
+            self.score = score
+            self.payload = payload
+
+    class FakeQueryResponse:
+        def __init__(self, points: list[FakePoint]) -> None:
+            self.points = points
+
+    def fake_query_points(**kwargs):
+        return FakeQueryResponse(
+            [
+                FakePoint(
+                    0.99,
+                    {
+                        "project_name": "demo",
+                        "scope_type": "symbol",
+                        "unit_type": "method",
+                        "sqlite_uri": "sqlite://projects/demo/files/9/symbols/0",
+                        "sqlite_file_uri": "sqlite://projects/demo/files/9",
+                        "file_path": "vendor/hello.min.js",
+                        "symbol_name": "helloWorld",
+                        "content_text": "function helloWorld(){return 1}",
+                        "chunk_text": "function helloWorld(){return 1}",
+                        "signature": "function helloWorld(){return 1}",
+                    },
+                ),
+                FakePoint(
+                    0.80,
+                    {
+                        "project_name": "demo",
+                        "scope_type": "symbol",
+                        "unit_type": "method",
+                        "sqlite_uri": "sqlite://projects/demo/files/10/symbols/0",
+                        "sqlite_file_uri": "sqlite://projects/demo/files/10",
+                        "file_path": "src/hello.py",
+                        "symbol_name": "hello_world",
+                        "content_text": "def hello_world(): pass",
+                        "chunk_text": "def hello_world(): pass",
+                        "signature": "def hello_world(): pass",
+                    },
+                ),
+            ]
+        )
+
+    fake_client.collection_exists_value = True
+    monkeypatch.setattr(fake_client, "query_points", fake_query_points)
+
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
+
+    result = index.search("hello world", project="demo", scope_type="symbol", limit=2)
+
+    assert [item["sqlite_uri"] for item in result["results"]] == [
+        "sqlite://projects/demo/files/10/symbols/0",
+        "sqlite://projects/demo/files/9/symbols/0",
+    ]
+
+
+def test_qdrant_index_uses_injected_embedding_provider_for_vectors_and_dimension() -> None:
+    class FakeEmbeddingProvider:
+        vector_size = 3
+
+        def embed_document(self, text: str) -> list[float]:
+            return [1.0, 2.0, 3.0]
+
+        def embed_query(self, text: str) -> list[float]:
+            return [4.0, 5.0, 6.0]
+
+    fake_client = FakeQdrantClient(collection_exists=False)
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
+
+    index.ensure_collection()
+    assert fake_client.created_collections[0]["vectors_config"].size == 3
+
+    points = [
+        index._make_point(
+            project="demo",
+            project_root="/tmp/demo",
+            file_id=1,
+            file_path="app.py",
+            language="python",
+            languages=["python"],
+            indexed_at="2026-06-15T12:00:00",
+            file_size=12,
+            file_mtime_ns=34,
+            chunk_text="def hello(): pass",
+            source_kind="file",
+        )
+    ]
+    assert points[0].vector == [1.0, 2.0, 3.0]
+    assert points[0].payload["sqlite_uri"] == "sqlite://projects/demo/files/1"
+
