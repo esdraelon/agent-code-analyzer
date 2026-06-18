@@ -295,7 +295,7 @@ Lexical search is the cheapest high-signal win in the roadmap. It gives predicta
 
 ### Milestone 8: Add full-codebase embedding search
 
-**Status:** in progress
+**Status:** complete
 
 **Objective:** Replace the current best-effort vector projection with a practical semantic retrieval layer that can search the whole codebase using real embeddings instead of hash-derived placeholders.
 
@@ -308,20 +308,6 @@ Lexical search handles literal precision; this milestone handles semantic recall
 - File-level and symbol-level chunks carry source, path, signature, skeleton, and project metadata.
 - Project sync and watcher paths attempt best-effort vector refresh/delete alongside the sqlite source of truth.
 - `projects.search_code()` merges lexical and semantic results and keeps the public search surface unchanged.
-
-**Still to finish:**
-- Compare the hybrid output against the benchmark queries and capture the timing/quality deltas.
-  - Use the repeatable snapshot command as the checkpoint, not an ad hoc one-off run.
-  - Compare the newest snapshot against the previous snapshot and keep the time series growing forward.
-  - Record both result quality and the timing breakdown so a quality gain does not hide a latency regression.
-- Decide whether any additional chunking or metadata refinements are needed for the remaining semantic cases.
-  - Default preference is to keep *both* file chunks and symbol chunks.
-  - File chunks should preserve project/file/scope context.
-  - Symbol chunks should preserve Tree-sitter symbol identity and line-range linkage.
-  - Any extra refinement should be driven by a specific miss in the benchmark set, not by abstraction alone.
-- Tighten the refresh / bootstrap story if any edge cases show up during broader integration runs.
-  - Verify fswatch-triggered refreshes propagate through the sqlite source of truth, lexical index, and best-effort Qdrant projection.
-  - Confirm bootstrap and incremental sync stay idempotent across repeated runs.
 
 **Detailed shape:**
 - Replace the current hash-derived vectors with a real embedding model.
@@ -345,7 +331,7 @@ Lexical search handles literal precision; this milestone handles semantic recall
 3. Build the embedding index / point builder around stable IDs. ✅
 4. Wire incremental refresh into project sync and watcher events. ✅
 5. Fuse lexical and semantic retrieval into a predictable result order. ✅
-6. Compare the hybrid output against the benchmark queries. ⬜
+6. Compare the hybrid output against the benchmark queries. ✅
 
 **Initial slice:**
 - Build and wire the lexical index first, then compare it against the existing semantic path on the benchmark queries.
@@ -405,7 +391,50 @@ Lexical search handles literal precision; this milestone handles semantic recall
 
 ---
 
-### Milestone 10: Add component intent analysis
+### Milestone 10: Preflight validations
+
+**Status:** planned
+
+**Objective:** Add a preflight milestone that proves the project is onboarded correctly and that all supporting subservices are operational before later retrieval changes run.
+
+**Why this is separate from the later retrieval milestones:**
+The retrieval layers only matter if the project is actually registered, synced, and backed by healthy services. This milestone makes that readiness explicit instead of assuming the environment is good enough.
+
+**Planned shape:**
+- Verify the project is properly onboarded in the metadata registry.
+  - Confirm the project exists in the expected sqlite metadata tables.
+  - Confirm the project has a usable per-project index / persisted state.
+  - Confirm bootstrap or sync can run without creating duplicate or stale registrations.
+- Verify all subservices are operational.
+  - Confirm the project sync path is running and reachable.
+  - Confirm the watcher / refresh path is alive if filesystem watching is enabled.
+  - Confirm the lexical search path is available when the lexical milestone is enabled.
+  - Confirm the semantic path can reach the configured vector backend and embedding provider.
+- Keep the check lightweight enough to run before benchmark captures and before broader integration runs.
+
+**Implementation slices:**
+1. Define a compact preflight health report shape.
+2. Add a project-onboarding check that fails clearly when registration or persisted state is missing.
+3. Add subservice checks for watcher, lexical, and semantic dependencies.
+4. Expose the preflight result through the server or a small helper so the roadmap can call it before comparing retrieval behavior.
+5. Add tests that cover healthy, partially healthy, and broken startup states.
+
+**Likely files:**
+- Modify: `src/agent_code_analyzer/server.py`
+- Modify: `src/agent_code_analyzer/projects.py`
+- Modify: `src/agent_code_analyzer/watcher.py`
+- Modify: `src/agent_code_analyzer/vector_index.py`
+- Possibly create: `src/agent_code_analyzer/preflight.py`
+- Add tests under `tests/`
+
+**Success criteria:**
+- The plan has a repeatable readiness gate before deeper retrieval work proceeds.
+- The check answers the two questions directly: onboarding status and subservice status.
+- Failures are explicit enough to tell setup issues apart from retrieval regressions.
+
+---
+
+### Milestone 11: Add component intent analysis
 
 **Status:** planned
 
@@ -439,7 +468,7 @@ Intent analysis is useful, but it depends on the retrieval pipeline being trustw
 
 ---
 
-### Milestone 11: Cache review and tuning at the end
+### Milestone 12: Cache review and tuning at the end
 
 **Status:** planned
 
@@ -465,6 +494,35 @@ Intent analysis is useful, but it depends on the retrieval pipeline being trustw
 
 ---
 
+### Milestone 13: Post-project recheck/reach startup optimization
+
+**Status:** planned
+
+**Objective:** Add a lightweight startup check that reuses already-registered project state, so boot can confirm project readiness without replaying a full bootstrap when nothing has changed.
+
+**Why this comes after the final milestone:**
+This is an optimization pass, not core product functionality. It belongs after the roadmap’s main feature and safety-net milestones so it does not distract from correctness work.
+
+**Planned shape:**
+- Build a compact recheck/reach list of registered projects at startup.
+- Compare current project state against persisted metadata before deciding whether to replay bootstrap.
+- Keep the existing safe bootstrap path available when the recheck cannot prove freshness.
+- Use the optimization only when it can skip redundant startup work without changing correctness.
+
+**Likely files:**
+- Modify: `src/agent_code_analyzer/server.py`
+- Modify: `src/agent_code_analyzer/vector_index.py`
+- Modify: `src/agent_code_analyzer/projects.py`
+- Add tests under `tests/`
+
+**Success criteria:**
+- Startup can cheaply confirm already-registered projects.
+- Unchanged projects avoid unnecessary full bootstrap replay.
+- The safe replay path still handles uncertain or stale state.
+- The optimization does not change project correctness or registration semantics.
+
+---
+
 ## Recommended implementation order
 
 1. Implement filesystem watching incremental re-parsing
@@ -476,8 +534,10 @@ Intent analysis is useful, but it depends on the retrieval pipeline being trustw
 7. Add preprocessed lexical search
 8. Add full-codebase embedding search
 9. Add coverage tooling and regression safety nets
-10. Add component intent analysis
-11. Cache review and tuning at the end
+10. Preflight validations
+11. Add component intent analysis
+12. Cache review and tuning at the end
+13. Post-project recheck/reach startup optimization
 
 ---
 
