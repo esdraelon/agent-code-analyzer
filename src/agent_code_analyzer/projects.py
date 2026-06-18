@@ -96,7 +96,7 @@ def _ensure_project_schema(conn: sqlite3.Connection) -> None:
     _storage._ensure_project_schema(conn)
 
 
-def _project_file_snapshot(path: Path) -> dict[str, int]:
+def _project_file_snapshot(path: Path) -> dict[str, int | str]:
     _sync_storage()
     return _storage._project_file_snapshot(path)
 
@@ -153,6 +153,7 @@ def _upsert_file_analysis(
     indexed_at: str,
     file_size: int,
     file_mtime_ns: int,
+    file_content_hash: str,
 ) -> None:
     _sync_storage()
     parsed = analysis["parsed"]
@@ -169,8 +170,8 @@ def _upsert_file_analysis(
     conn.execute(
         """
         INSERT INTO files (
-            rel_path, abs_path, language, languages, root_type, root_start_row, root_start_column, root_end_row, root_end_column, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rel_path, abs_path, language, languages, root_type, root_start_row, root_start_column, root_end_row, root_end_column, node_count, has_error, byte_length, file_size, file_mtime_ns, file_content_hash, skeleton, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(rel_path) DO UPDATE SET
             abs_path = excluded.abs_path,
             language = excluded.language,
@@ -185,6 +186,7 @@ def _upsert_file_analysis(
             byte_length = excluded.byte_length,
             file_size = excluded.file_size,
             file_mtime_ns = excluded.file_mtime_ns,
+            file_content_hash = excluded.file_content_hash,
             skeleton = excluded.skeleton,
             indexed_at = excluded.indexed_at
         """,
@@ -203,6 +205,7 @@ def _upsert_file_analysis(
             byte_length,
             file_size,
             file_mtime_ns,
+            file_content_hash,
             skeleton,
             indexed_at,
         ),

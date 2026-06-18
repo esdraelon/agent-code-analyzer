@@ -117,6 +117,7 @@ class ProjectRowMapper:
             "byte_length": row["byte_length"],
             "file_size": row["file_size"],
             "file_mtime_ns": row["file_mtime_ns"],
+            "file_content_hash": row["file_content_hash"] if "file_content_hash" in row.keys() else "",
             "skeleton": row["skeleton"],
             "indexed_at": row["indexed_at"],
         }

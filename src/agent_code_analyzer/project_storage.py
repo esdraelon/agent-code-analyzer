@@ -50,6 +50,14 @@ def _project_db_path(name: str) -> Path:
     return PROJECTS_DIR / f"{_slugify(name)}-{digest}" / "project.sqlite3"
 
 
+def _project_file_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _db_lock(path: Path) -> threading.RLock:
     key = str(path.resolve())
     with _LOCKS_GUARD:
@@ -144,6 +152,7 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
             byte_length INTEGER NOT NULL,
             file_size INTEGER NOT NULL DEFAULT 0,
             file_mtime_ns INTEGER NOT NULL DEFAULT 0,
+            file_content_hash TEXT NOT NULL DEFAULT '',
             skeleton TEXT NOT NULL,
             indexed_at TEXT NOT NULL
         );
@@ -182,6 +191,8 @@ def _ensure_project_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0")
     if "file_mtime_ns" not in columns:
         conn.execute("ALTER TABLE files ADD COLUMN file_mtime_ns INTEGER NOT NULL DEFAULT 0")
+    if "file_content_hash" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN file_content_hash TEXT NOT NULL DEFAULT ''")
     if "languages" not in columns:
         conn.execute("ALTER TABLE files ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
     if "root_start_row" not in columns:
@@ -198,9 +209,13 @@ def _ensure_project_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE symbols ADD COLUMN languages TEXT NOT NULL DEFAULT '[]'")
 
 
-def _project_file_snapshot(path: Path) -> dict[str, int]:
+def _project_file_snapshot(path: Path) -> dict[str, int | str]:
     stat = path.stat()
-    return {"file_size": int(stat.st_size), "file_mtime_ns": int(stat.st_mtime_ns)}
+    return {
+        "file_size": int(stat.st_size),
+        "file_mtime_ns": int(stat.st_mtime_ns),
+        "file_content_hash": _project_file_hash(path),
+    }
 
 
 def _normalize_project(project: str) -> str:

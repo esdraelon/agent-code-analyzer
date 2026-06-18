@@ -218,7 +218,7 @@ class ProjectRepository:
     def read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, object]:
         row = conn.execute(
             """
-            SELECT rel_path, abs_path, language, languages, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
+            SELECT rel_path, abs_path, language, languages, root_type, node_count, has_error, byte_length, file_size, file_mtime_ns, file_content_hash, skeleton, indexed_at
             FROM files
             WHERE id = ?
             """,

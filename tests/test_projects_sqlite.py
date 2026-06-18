@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_code_analyzer.projects import add_project, ingest_project_tree
+from agent_code_analyzer.project_sync_steps import project_sync_diff
 from agent_code_analyzer.server import (
     detect_source_language,
     generate_ast_skeleton,
@@ -152,3 +153,24 @@ def test_sync_project_tree_tracks_changed_and_deleted_files(tmp_path: Path, monk
             ("sync",),
         ).fetchone()
         assert project_state == (1, 1, 1)
+
+
+def test_project_sync_diff_uses_content_hash_to_detect_drift(tmp_path: Path) -> None:
+    file_path = tmp_path / "alpha.py"
+    file_path.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+    current_files = {"alpha.py": file_path}
+    current_stats = {"alpha.py": {"file_size": 26, "file_mtime_ns": 123, "file_content_hash": "new-hash"}}
+    existing_files = {
+        "alpha.py": {
+            "file_size": 26,
+            "file_mtime_ns": 123,
+            "file_content_hash": "old-hash",
+        }
+    }
+
+    deleted_paths, unchanged_paths, changed_paths = project_sync_diff(existing_files, current_files, current_stats)
+
+    assert deleted_paths == []
+    assert unchanged_paths == []
+    assert changed_paths == ["alpha.py"]

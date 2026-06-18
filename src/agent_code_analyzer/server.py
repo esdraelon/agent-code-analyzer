@@ -18,6 +18,7 @@ from .projects import (
     resolve_project_path,
     search_code as search_code_records,
     search_projects as search_project_records,
+    sync_project_tree as sync_project_index,
 )
 from .watcher import ProjectWatcherService
 from .vector_index import bootstrap_existing_projects, get_vector_index
@@ -25,6 +26,8 @@ from .vector_index import bootstrap_existing_projects, get_vector_index
 SERVER_INSTRUCTIONS = (
     "Tree-sitter-backed MCP for code-first analysis, symbol navigation, and line-accurate verification. "
     "Use this server whenever the user asks about source structure, definitions, references, ownership boundaries, or refactor impact. "
+    "Any time the user asks you to consider the content of a code base, first check whether that code base is already ingested in agent-code-analyzer. "
+    "If it is ingested, use this server's tools to investigate it. If it is not ingested, ask whether it should be onboarded to agent-code-analyzer before proceeding. "
     "Prefer project-scoped tools such as parse_source, generate_ast_skeleton, list_code_symbols, detect_source_language, read_file_excerpt, lexical_search, and search_code before guessing from raw text. "
     "When the question is about code, inspect the project first and answer with file paths, symbols, and line ranges when available. "
     "All analysis calls are project-scoped."
@@ -199,6 +202,8 @@ def main() -> None:
 
     def _bootstrap_in_background() -> None:
         try:
+            for project in list_project_records():
+                sync_project_index(str(project["name"]))
             bootstrap_existing_projects()
         except Exception as exc:  # pragma: no cover - defensive startup guard
             LOGGER.warning("Background bootstrap failed: %s", exc)
