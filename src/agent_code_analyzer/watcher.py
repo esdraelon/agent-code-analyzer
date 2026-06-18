@@ -147,7 +147,6 @@ class ProjectWatcherService:
             return self
         self._ensure_fswatch_available()
         self._stop_event.clear()
-        self.scan_once()
         self._watch_thread = threading.Thread(target=self._watch_loop, name="agent-code-analyzer-fswatch", daemon=True)
         self._sweep_thread = threading.Thread(target=self._sweep_loop, name="agent-code-analyzer-sweep", daemon=True)
         self._watch_thread.start()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +34,8 @@ mcp = FastMCP(
     name="agent-code-analyzer",
     instructions=SERVER_INSTRUCTIONS,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -191,8 +195,15 @@ def read_file_excerpt(
 
 
 def main() -> None:
-    bootstrap_existing_projects()
     watcher = ProjectWatcherService().start()
+
+    def _bootstrap_in_background() -> None:
+        try:
+            bootstrap_existing_projects()
+        except Exception as exc:  # pragma: no cover - defensive startup guard
+            LOGGER.warning("Background bootstrap failed: %s", exc)
+
+    threading.Thread(target=_bootstrap_in_background, name="agent-code-analyzer-bootstrap", daemon=True).start()
     try:
         mcp.run(transport="stdio")
     finally:
