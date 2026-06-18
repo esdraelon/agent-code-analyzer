@@ -13,6 +13,7 @@ def test_server_instructions_promote_code_first_workflows() -> None:
     assert "list_code_symbols" in instructions
     assert "read_file_excerpt" in instructions
     assert "project-scoped" in instructions
+    assert "onboarded to agent-code-analyzer" in instructions
 
 
 def test_tool_response_factory_shapes_fallback_payloads() -> None:

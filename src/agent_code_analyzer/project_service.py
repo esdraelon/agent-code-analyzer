@@ -42,6 +42,7 @@ def _sync_project_file(
     indexed_at: str,
 ) -> int:
     analysis = analyze_file(str(resolved_path))
+    snapshot = storage._project_file_snapshot(resolved_path)
     _upsert_file_analysis(
         conn,
         project=project,
@@ -49,7 +50,9 @@ def _sync_project_file(
         resolved_path=resolved_path,
         analysis=analysis,
         indexed_at=indexed_at,
-        **storage._project_file_snapshot(resolved_path),
+        file_size=int(snapshot["file_size"]),
+        file_mtime_ns=int(snapshot["file_mtime_ns"]),
+        file_content_hash=str(snapshot["file_content_hash"]),
     )
     return len(analysis["symbols"])
 
@@ -199,6 +202,7 @@ def _upsert_file_analysis(
     indexed_at: str,
     file_size: int,
     file_mtime_ns: int,
+    file_content_hash: str,
 ) -> None:
     parsed = analysis["parsed"]
     root_node = parsed.tree.root_node
@@ -214,8 +218,8 @@ def _upsert_file_analysis(
     conn.execute(
         """
         INSERT INTO files (
-            rel_path, abs_path, language, languages, root_type, root_start_row, root_start_column, root_end_row, root_end_column, node_count, has_error, byte_length, file_size, file_mtime_ns, skeleton, indexed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rel_path, abs_path, language, languages, root_type, root_start_row, root_start_column, root_end_row, root_end_column, node_count, has_error, byte_length, file_size, file_mtime_ns, file_content_hash, skeleton, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(rel_path) DO UPDATE SET
             abs_path = excluded.abs_path,
             language = excluded.language,
@@ -230,6 +234,7 @@ def _upsert_file_analysis(
             byte_length = excluded.byte_length,
             file_size = excluded.file_size,
             file_mtime_ns = excluded.file_mtime_ns,
+            file_content_hash = excluded.file_content_hash,
             skeleton = excluded.skeleton,
             indexed_at = excluded.indexed_at
         """,
@@ -248,6 +253,7 @@ def _upsert_file_analysis(
             byte_length,
             file_size,
             file_mtime_ns,
+            file_content_hash,
             skeleton,
             indexed_at,
         ),
@@ -390,7 +396,7 @@ def sync_project_tree(project: str) -> dict[str, Any]:
                 row["rel_path"]: row
                 for row in conn.execute(
                     """
-                    SELECT id, rel_path, abs_path, file_size, file_mtime_ns
+                    SELECT id, rel_path, abs_path, file_size, file_mtime_ns, file_content_hash
                     FROM files
                     """
                 ).fetchall()

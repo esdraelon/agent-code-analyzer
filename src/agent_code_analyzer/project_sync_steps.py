@@ -9,9 +9,9 @@ from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
 
 
-def scan_source_files(root: Path) -> tuple[dict[str, Path], dict[str, dict[str, int]]]:
+def scan_source_files(root: Path) -> tuple[dict[str, Path], dict[str, dict[str, int | str]]]:
     current_files: dict[str, Path] = {}
-    current_stats: dict[str, dict[str, int]] = {}
+    current_stats: dict[str, dict[str, int | str]] = {}
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
@@ -30,7 +30,7 @@ def scan_source_files(root: Path) -> tuple[dict[str, Path], dict[str, dict[str, 
 def project_sync_diff(
     existing_files: dict[str, Any],
     current_files: dict[str, Path],
-    current_stats: dict[str, dict[str, int]],
+    current_stats: dict[str, dict[str, int | str]],
 ) -> tuple[list[str], list[str], list[str]]:
     current_paths = set(current_files)
     existing_paths = set(existing_files)
@@ -45,6 +45,7 @@ def project_sync_diff(
             existing_row is not None
             and int(existing_row["file_size"]) == snapshot["file_size"]
             and int(existing_row["file_mtime_ns"]) == snapshot["file_mtime_ns"]
+            and str(existing_row["file_content_hash"] if "file_content_hash" in existing_row.keys() else "") == snapshot["file_content_hash"]
         ):
             unchanged_paths.append(rel_path)
             continue
