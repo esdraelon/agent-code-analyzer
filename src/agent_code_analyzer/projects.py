@@ -11,6 +11,7 @@ from .project_repository import ProjectRepository as _ProjectRepository
 from .project_row_mapper import ProjectRowMapper as _ProjectRowMapper
 from .lexical_index import search as _lexical_search_impl
 from .lexical_index import sync_analysis as _sync_lexical_analysis
+from .search_filters import normalize_exclusions, should_exclude_result
 from .vector_index import get_vector_index
 from .project_service import (
     _iter_source_files as _iter_source_files_impl,
@@ -305,12 +306,30 @@ def lexical_search(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    exclude_files: list[str] | None = None,
+    exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     _sync_storage()
+    excluded_files = normalize_exclusions(exclude_files)
+    excluded_symbols = normalize_exclusions(exclude_symbols)
     if project is not None:
         project_data = get_project(project)
         with _storage._connect(Path(project_data["db_path"])) as conn:
-            return _lexical_search_impl(conn, query, project=project, scope_type=scope_type, limit=limit)
+            result = _lexical_search_impl(
+                conn,
+                query,
+                project=project,
+                scope_type=scope_type,
+                limit=limit,
+                exclude_files=exclude_files,
+                exclude_symbols=exclude_symbols,
+            )
+            result["results"] = [
+                item
+                for item in result.get("results", [])
+                if not should_exclude_result(item, exclude_files=excluded_files, exclude_symbols=excluded_symbols)
+            ]
+            return result
 
     results: list[dict[str, Any]] = []
     for project_record in list_projects():
@@ -321,8 +340,14 @@ def lexical_search(
                 project=project_record["name"],
                 scope_type=scope_type,
                 limit=limit,
+                exclude_files=exclude_files,
+                exclude_symbols=exclude_symbols,
             )
-        results.extend(search_result["results"])
+        results.extend(
+            item
+            for item in search_result["results"]
+            if not should_exclude_result(item, exclude_files=excluded_files, exclude_symbols=excluded_symbols)
+        )
 
     results.sort(
         key=lambda item: (
@@ -335,10 +360,17 @@ def lexical_search(
     return {"query": query, "project": None, "scope_type": scope_type, "limit": limit, "results": results[:limit]}
 
 
-def _merge_search_results(*groups: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+def _merge_search_results(
+    *groups: dict[str, Any],
+    limit: int,
+    exclude_files: set[str] | None = None,
+    exclude_symbols: set[str] | None = None,
+) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     for group_index, group in enumerate(groups):
         for result_index, result in enumerate(group.get("results", [])):
+            if should_exclude_result(result, exclude_files=exclude_files, exclude_symbols=exclude_symbols):
+                continue
             sqlite_uri = str(result.get("sqlite_uri", ""))
             if not sqlite_uri:
                 continue
@@ -365,11 +397,35 @@ def search_code(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    exclude_files: list[str] | None = None,
+    exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     _sync_storage()
-    lexical = lexical_search(query, project=project, scope_type=scope_type, limit=limit)
-    semantic = get_vector_index().search(query, project=project, scope_type=scope_type, limit=limit)
-    results = _merge_search_results(lexical, semantic, limit=limit)
+    lexical = lexical_search(
+        query,
+        project=project,
+        scope_type=scope_type,
+        limit=limit,
+        exclude_files=exclude_files,
+        exclude_symbols=exclude_symbols,
+    )
+    semantic = get_vector_index().search(
+        query,
+        project=project,
+        scope_type=scope_type,
+        limit=limit,
+        exclude_files=exclude_files,
+        exclude_symbols=exclude_symbols,
+    )
+    excluded_files = normalize_exclusions(exclude_files)
+    excluded_symbols = normalize_exclusions(exclude_symbols)
+    results = _merge_search_results(
+        lexical,
+        semantic,
+        limit=limit,
+        exclude_files=excluded_files,
+        exclude_symbols=excluded_symbols,
+    )
     return {
         "query": query,
         "project": project,

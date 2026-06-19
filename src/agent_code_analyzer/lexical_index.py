@@ -5,6 +5,7 @@ from time import perf_counter
 from typing import Any
 
 from .lexical_repository import LexicalDocument, LexicalRepository
+from .search_filters import normalize_exclusions, should_exclude_result
 from .search_rank import query_terms, tokenize_text
 from .search_scoring import DEFAULT_SEARCH_SCORER
 
@@ -97,6 +98,8 @@ def search(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    exclude_files: list[str] | None = None,
+    exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     started_at = perf_counter()
     LexicalRepository.ensure_schema(conn)
@@ -110,6 +113,8 @@ def search(
             "results": [],
         }
 
+    excluded_files = normalize_exclusions(exclude_files)
+    excluded_symbols = normalize_exclusions(exclude_symbols)
     results: list[dict[str, Any]] = []
     candidate_started_at = perf_counter()
     candidate_documents = LexicalRepository.fetch_candidate_documents(
@@ -125,6 +130,8 @@ def search(
         if score <= 0:
             continue
         document["score"] = score
+        if should_exclude_result(document, exclude_files=excluded_files, exclude_symbols=excluded_symbols):
+            continue
         results.append(document)
     scoring_elapsed_ms = (perf_counter() - scoring_started_at) * 1000.0
 

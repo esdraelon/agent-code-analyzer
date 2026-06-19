@@ -14,6 +14,7 @@ from . import project_storage as storage
 from .embedding_provider import EmbeddingProvider, get_embedding_provider
 from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
+from .search_filters import normalize_exclusions, should_exclude_result
 from .search_rank import build_embedding_text, tokenize_text
 from .search_scoring import DEFAULT_SEARCH_SCORER
 from .vector_payload_factory import (
@@ -589,6 +590,8 @@ class QdrantVectorIndex:
         project: str | None = None,
         scope_type: str | None = None,
         limit: int = 10,
+        exclude_files: list[str] | None = None,
+        exclude_symbols: list[str] | None = None,
     ) -> dict[str, Any]:
         needle = query.strip()
         if not needle:
@@ -622,6 +625,8 @@ class QdrantVectorIndex:
             with_vectors=False,
         )
         points = getattr(response, "points", response) or []
+        excluded_files = normalize_exclusions(exclude_files)
+        excluded_symbols = normalize_exclusions(exclude_symbols)
         results: list[dict[str, Any]] = []
         for point in points:
             payload = dict(getattr(point, "payload", {}) or {})
@@ -642,6 +647,8 @@ class QdrantVectorIndex:
                 unit_type=str(result.get("unit_type", "")),
                 content_text=str(result.get("content_text", "")),
             )
+            if should_exclude_result(result, exclude_files=excluded_files, exclude_symbols=excluded_symbols):
+                continue
             results.append(result)
         results.sort(
             key=lambda item: (
