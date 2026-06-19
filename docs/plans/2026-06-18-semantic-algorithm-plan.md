@@ -209,6 +209,24 @@ The implementation must support two update styles:
 - Modify: `src/agent_code_analyzer/vector_index.py`
 - Add tests under: `tests/test_watcher.py`
 
+**Batching strategy:**
+- collect file system events into a short-lived batch window instead of calling the agent once per event
+- normalize multiple edits to the same file into one update record
+- group related edits that share the same subtree, method, or class so the agent sees the smallest useful context bundle
+- attach the diff hunk, source anchor, and current semantic lineage to each update record
+- if a batch spans multiple unrelated files, split it into separate contextual records before calling the agent
+
+**Update record shape:**
+- project
+- file path
+- change type: `add`, `modify`, `delete`, or `move`
+- old path and new path when applicable
+- start/end line range for the diff or anchor region
+- tree-sitter/AST anchor for the affected unit
+- parent scope reference
+- prior description text when available
+- current source snippet or diff hunk
+
 **Diff update behavior:**
 - receive changed file paths and diff metadata from fswatch
 - batch related file events into contextual update records before sending them to the semantic writer
@@ -220,12 +238,19 @@ The implementation must support two update styles:
 - treat deletions as explicit removals of the affected semantic records
 - treat moves and refactors as rename/move events where lineage and source anchors may need remapping rather than a full re-describe
 
+**Special handling:**
+- deletions should remove the semantic records for the deleted subtree and any dependent child records
+- pure renames should prefer path/identity remapping when the source content is unchanged
+- refactors that move code between files or classes may require rebuilding lineage even if the text is similar
+- if an update record cannot be mapped confidently, fall back to a conservative re-describe of the smallest enclosing semantic unit
+
 **Verification:**
 - Editing one method only refreshes that method and its affected chunks.
 - Editing a class-level boundary refreshes the owning class and the contained methods/chunks as needed.
 - Unchanged files do not get rewritten during a diff update.
 - Deletions remove the associated semantic records cleanly.
 - Move/refactor events preserve identity where possible and remap anchors where necessary.
+- Multiple rapid saves on the same file collapse into one batch update.
 
 ---
 
