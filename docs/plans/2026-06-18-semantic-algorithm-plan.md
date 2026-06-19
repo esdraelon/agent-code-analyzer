@@ -9,6 +9,26 @@ Use Tree-sitter as the structural boundary detector, then generate plain-languag
 
 The description generator must be isolated behind a narrow agent interface so the implementation can start with an abstract stub that returns a semaphore/no-response sentinel. That keeps the plumbing testable while the real agent is still being designed. The indexing pipeline needs two operating modes: a full mass-ingestion mode that rebuilds everything from scratch, and a piecewise mode that consumes filesystem diffs from `fswatch` so only changed regions are regenerated.
 
+**Detailed implementation strategy:**
+Use Tree-sitter as the context shaper for ingestion. Instead of sending whole files blindly, build annotated structural slices that include a source segment, the subtree it represents, and a compact lineage path. Target a context budget of roughly 50k tokens as an upper bound, not a fixed size; most calls should be smaller and centered on one meaningful Tree-sitter region. The agent should receive enough local structure to explain the code without needing the entire repository.
+
+For each ingestion call, send:
+- the source slice for the current subtree
+- the annotated Tree-sitter outline for that subtree
+- the file path, symbol path, and line range metadata
+- parent/child lineage for nested scopes
+- a short instruction prompt that explains the output contract
+
+The instruction prompt should tell the agent to produce semantic descriptions at the package, module, file, class, method, and chunk levels. Package/module/file descriptions should emphasize architecture, intent, ownership, and dependencies. Class/method/chunk descriptions should emphasize behavior, control flow, and algorithmic detail. The output should be strict structured data, preferably JSON, so the ingestion pipeline can store and refresh records deterministically.
+
+To keep context load and latency under control, the strategy should avoid repeating the same source in multiple prompts. Higher-level summaries should be derived from Tree-sitter structure, symbol signatures, imports, and child digests whenever possible. Lower-level summaries should receive the exact subtree and its local surroundings. If a subtree is too large, the chunker should split it further by AST boundaries and then by control-flow regions.
+
+The agent interface should remain narrow and swappable. The first implementation can be an abstract stub that returns a semaphore/no-response sentinel, which keeps the plumbing testable before a real model-backed writer exists. The semantic writer contract must distinguish a deliberate no-response from a transport failure.
+
+This design should support two operating modes:
+- **Mass ingestion:** walk the whole project, generate descriptions for every semantic unit, and write the resulting records and embeddings in one rebuild pass.
+- **Piecewise diff updates:** consume filesystem diffs from `fswatch`, identify the smallest affected semantic units, and regenerate only the impacted descriptions and embeddings.
+
 **Tech Stack:**
 - Python 3.11+
 - Tree-sitter parsing already present in the repo
