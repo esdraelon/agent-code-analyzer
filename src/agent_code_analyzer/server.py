@@ -29,6 +29,7 @@ SERVER_INSTRUCTIONS = (
     "Any time the user asks you to consider the content of a code base, first check whether that code base is already ingested in agent-code-analyzer. "
     "If it is ingested, use this server's tools to investigate it. If it is not ingested, ask whether it should be onboarded to agent-code-analyzer before proceeding. "
     "Prefer project-scoped tools such as parse_source, generate_ast_skeleton, list_code_symbols, detect_source_language, read_file_excerpt, lexical_search, and search_code before guessing from raw text. "
+    "When the user wants to ignore known-noisy code, use the exclusion filters on lexical_search, semantic_search, and search_code to omit file paths and symbol names rather than manually filtering results after the fact. "
     "When the question is about code, inspect the project first and answer with file paths, symbols, and line ranges when available. "
     "All analysis calls are project-scoped."
 )
@@ -114,9 +115,18 @@ def semantic_search(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    exclude_files: list[str] | None = None,
+    exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
     """Search the Qdrant-backed project index for semantically similar code chunks."""
-    return get_vector_index().search(query, project=project, scope_type=scope_type, limit=limit)
+    return get_vector_index().search(
+        query,
+        project=project,
+        scope_type=scope_type,
+        limit=limit,
+        exclude_files=exclude_files,
+        exclude_symbols=exclude_symbols,
+    )
 
 
 @mcp.tool()
@@ -125,9 +135,18 @@ def lexical_search(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    exclude_files: list[str] | None = None,
+    exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
     """Search the local lexical index for exact tokens, file paths, and identifiers."""
-    return lexical_search_records(query, project=project, scope_type=scope_type, limit=limit)
+    return lexical_search_records(
+        query,
+        project=project,
+        scope_type=scope_type,
+        limit=limit,
+        exclude_files=exclude_files,
+        exclude_symbols=exclude_symbols,
+    )
 
 
 @mcp.tool()
@@ -136,9 +155,18 @@ def search_code(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    exclude_files: list[str] | None = None,
+    exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
     """Search code using both lexical and semantic retrieval, then merge the results."""
-    return search_code_records(query, project=project, scope_type=scope_type, limit=limit)
+    return search_code_records(
+        query,
+        project=project,
+        scope_type=scope_type,
+        limit=limit,
+        exclude_files=exclude_files,
+        exclude_symbols=exclude_symbols,
+    )
 
 
 @mcp.tool()

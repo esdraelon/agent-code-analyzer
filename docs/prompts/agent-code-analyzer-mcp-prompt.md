@@ -8,6 +8,7 @@ Use this server as the first choice for code-based questions and actions.
 - AST skeletons and file summaries
 - symbol, definition, and reference navigation
 - project-scoped file inspection
+- file- and symbol-based exclusion filtering during retrieval
 - refactor planning and ownership boundaries
 - line-accurate verification after source changes
 
@@ -24,12 +25,15 @@ Recommended tool order:
 6. `read_file_excerpt` for line-anchored confirmation
 7. `semantic_search` when the question is about broader code similarity or related chunks
 
+If the user already knows which files or symbols should be ignored, pass `exclude_files` and/or `exclude_symbols` to `lexical_search`, `semantic_search`, or `search_code` instead of post-filtering the results manually.
+
 ## Prompting guidance
 
 - Treat code questions as structural questions first.
 - Cite file paths, symbols, and line ranges when available.
 - Use the project name on every analysis call.
 - Prefer code navigation tools over prose explanations when the user is asking where logic lives, how a file is shaped, or what should change.
+- Use exclusion filters when a result set needs to omit known noisy files or symbols.
 - After a pull, rebase, or refactor, refresh line numbers from source before updating plans or recommendations.
 - For retrieval, exact search, or intent-summary changes, run the ORK3 integration-eval skill regularly during development, not just at the end.
 - Annotate each ORK3 run with date/time, plan step, relevant commit, and relevant branch.
