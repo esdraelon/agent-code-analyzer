@@ -19,9 +19,11 @@ For each ingestion call, send:
 - parent/child lineage for nested scopes
 - a short instruction prompt that explains the output contract
 
-The instruction prompt should tell the agent to produce semantic descriptions at the package, module, file, class, method, and chunk levels. Package/module/file descriptions should emphasize architecture, intent, ownership, and dependencies. Class/method/chunk descriptions should emphasize behavior, control flow, and algorithmic detail. The output should be strict structured data, preferably JSON, so the ingestion pipeline can store and refresh records deterministically.
+The agent should return plain-language description text only. It does not need to emit JSON. The internal MCP endpoint will accept the description together with structured metadata and store both the payload and the embedding input. That keeps the language model focused on semantic explanation while the server enforces schema, lineage, and storage rules.
 
-To keep context load and latency under control, the strategy should avoid repeating the same source in multiple prompts. Higher-level summaries should be derived from Tree-sitter structure, symbol signatures, imports, and child digests whenever possible. Lower-level summaries should receive the exact subtree and its local surroundings. If a subtree is too large, the chunker should split it further by AST boundaries and then by control-flow regions.
+The internal semantic-description endpoint should accept a structured record with fields such as project, scope type, scope identifier, file path, symbol path, line range, Tree-sitter/AST anchor, parent scope reference, and description text. The description text is what gets embedded. The metadata is what lets search return the file, class, method, and lines that correspond to a fuzzy query like "database read" without requiring a lexical match.
+
+Package/module/file descriptions should emphasize architecture, intent, ownership, and dependencies. Class/method/chunk descriptions should emphasize behavior, control flow, and algorithmic detail. The pipeline should avoid repeating the same source in multiple prompts. Higher-level summaries should be derived from Tree-sitter structure, symbol signatures, imports, and child digests whenever possible. Lower-level summaries should receive the exact subtree and its local surroundings. If a subtree is too large, the chunker should split it further by AST boundaries and then by control-flow regions.
 
 The agent interface should remain narrow and swappable. The first implementation can be an abstract stub that returns a semaphore/no-response sentinel, which keeps the plumbing testable before a real model-backed writer exists. The semantic writer contract must distinguish a deliberate no-response from a transport failure.
 
@@ -29,6 +31,7 @@ This design should support two operating modes:
 - **Mass ingestion:** walk the whole project, generate descriptions for every semantic unit, and write the resulting records and embeddings in one rebuild pass.
 - **Piecewise diff updates:** consume filesystem diffs from `fswatch`, identify the smallest affected semantic units, and regenerate only the impacted descriptions and embeddings.
 
+Search should prioritize fuzzy semantic intent first and lexical matching second. A query like "database read" should resolve to relevant files, classes, methods, and line ranges through the embedding layer even when the exact words do not appear in source.
 **Tech Stack:**
 - Python 3.11+
 - Tree-sitter parsing already present in the repo
@@ -55,8 +58,10 @@ The implementation must support two update styles:
 
 2. **Piecewise diff updates**
    - consume filesystem diffs from `fswatch`
+   - batch them into contextual update records instead of firing one ingestion call per file event
    - identify the smallest affected semantic units
    - regenerate only impacted descriptions and embeddings
+   - allow the agent to return either a no-op sentinel or updated plain-language text for each record
 
 ---
 
@@ -206,15 +211,21 @@ The implementation must support two update styles:
 
 **Diff update behavior:**
 - receive changed file paths and diff metadata from fswatch
+- batch related file events into contextual update records before sending them to the semantic writer
 - map changed lines back to the owning method/class/file/module/package scope
 - invalidate old semantic records for the affected region
 - regenerate only the changed semantic units and their dependent chunks
+- let the writer return either a no-op sentinel or updated plain-language text for each record
 - preserve unchanged neighboring units
+- treat deletions as explicit removals of the affected semantic records
+- treat moves and refactors as rename/move events where lineage and source anchors may need remapping rather than a full re-describe
 
 **Verification:**
 - Editing one method only refreshes that method and its affected chunks.
 - Editing a class-level boundary refreshes the owning class and the contained methods/chunks as needed.
 - Unchanged files do not get rewritten during a diff update.
+- Deletions remove the associated semantic records cleanly.
+- Move/refactor events preserve identity where possible and remap anchors where necessary.
 
 ---
 
