@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +9,7 @@ from urllib.parse import quote
 
 from qdrant_client import QdrantClient, models as qmodels
 
+from .config import get_config
 from . import project_storage as storage
 from .embedding_provider import EmbeddingProvider, get_embedding_provider
 from .parsing import analyze_file
@@ -30,12 +30,10 @@ from .vector_payload_factory import (
     symbol_payload,
 )
 
-QDRANT_DEFAULT_URL = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_URL", "http://127.0.0.1:6333")
-QDRANT_DEFAULT_COLLECTION = os.environ.get("AGENT_CODE_ANALYZER_QDRANT_COLLECTION", "agent_code_analyzer_chunks_v2")
-QDRANT_EMBEDDING_MODEL = os.environ.get(
-    "AGENT_CODE_ANALYZER_EMBEDDING_MODEL",
-    "sentence-transformers/all-MiniLM-L6-v2",
-)
+_CONFIG = get_config()
+QDRANT_DEFAULT_URL = _CONFIG.vector.qdrant_url
+QDRANT_DEFAULT_COLLECTION = _CONFIG.vector.qdrant_collection
+QDRANT_EMBEDDING_MODEL = _CONFIG.vector.embedding_model
 QDRANT_NAMESPACE = uuid.UUID("8d02b10d-0d18-4b93-b3d9-4ff9c1c44c7d")
 
 

@@ -6,6 +6,8 @@ from threading import Condition, Lock
 from time import monotonic, sleep
 from typing import Iterator
 
+from .config import get_config
+
 
 @dataclass(frozen=True, slots=True)
 class RateLimitSignal:
@@ -89,7 +91,12 @@ class GlobalRateLimiter:
                 self._condition.notify_all()
 
 
-_GLOBAL_RATE_LIMITER = GlobalRateLimiter()
+_CONFIG = get_config()
+_GLOBAL_RATE_LIMITER = GlobalRateLimiter(
+    capacity=_CONFIG.rate_limit.capacity,
+    refill_per_second=_CONFIG.rate_limit.refill_per_second,
+    concurrency_limit=_CONFIG.rate_limit.concurrency_limit,
+)
 
 
 def get_global_rate_limiter() -> GlobalRateLimiter:
