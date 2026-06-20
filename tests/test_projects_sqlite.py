@@ -46,6 +46,57 @@ def test_ingest_project_tree_reuses_cached_project_state_without_reparsing(tmp_p
     assert summary["symbol_count"] == 1
 
 
+def test_ingest_project_tree_refresh_rebuilds_every_supported_file(tmp_path: Path, monkeypatch) -> None:
+    projects = _isolate_project_state(tmp_path, monkeypatch)
+
+    class FakeVectorIndex:
+        def __init__(self) -> None:
+            self.sync_calls: list[dict[str, Any]] = []
+
+        def sync_records(self, **kwargs) -> dict[str, Any]:
+            self.sync_calls.append(kwargs)
+            return {"points": len(kwargs.get("symbol_rows", [])) + 1}
+
+        def delete_file(self, sqlite_uri: str) -> None:
+            return None
+
+        def delete_project(self, project: str) -> None:
+            return None
+
+    fake_index = FakeVectorIndex()
+    monkeypatch.setattr("agent_code_analyzer.vector_index.get_vector_index", lambda: fake_index)
+
+    root = tmp_path / "refresh"
+    root.mkdir()
+    (root / "alpha.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    (root / "beta.py").write_text("def beta():\n    return 2\n", encoding="utf-8")
+
+    added = add_project("refresh", str(root), mode="directory")
+    assert added["ingest"]["file_count"] == 2
+
+    fake_index.sync_calls.clear()
+
+    import agent_code_analyzer.project_service as project_service
+
+    original_analyze_file = project_service.analyze_file
+    analyzed_paths: list[str] = []
+
+    def counting_analyze_file(path: str, *args, **kwargs):
+        analyzed_paths.append(Path(path).name)
+        return original_analyze_file(path, *args, **kwargs)
+
+    monkeypatch.setattr(project_service, "analyze_file", counting_analyze_file)
+
+    summary = ingest_project_tree("refresh", refresh=True)
+
+    assert summary["project"] == "refresh"
+    assert summary["file_count"] == 2
+    assert summary["supported_file_count"] == 2
+    assert summary["symbol_count"] == 2
+    assert analyzed_paths == ["alpha.py", "beta.py"]
+    assert len(fake_index.sync_calls) == 2
+
+
 def test_project_tools_reject_paths_outside_project_root(tmp_path: Path, monkeypatch) -> None:
     _isolate_project_state(tmp_path, monkeypatch)
 

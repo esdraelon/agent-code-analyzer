@@ -157,7 +157,7 @@ The code tree is already hierarchical, so chunking should follow the AST. Recurs
 
 ## Milestone 4: Full-project mass ingestion pipeline
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Rebuild the entire semantic description layer in one pass when the project needs a clean refresh.
 
@@ -202,6 +202,7 @@ File changes arrive as noisy events; they should be aggregated into a unit of wo
 - normalized update records per affected semantic scope
 - explicit handling for add / modify / delete / move
 - conservative fallback when scope mapping is ambiguous
+- early integration coverage for leaf-only edits, refactors, and parent-meaning drift
 
 **Likely files:**
 - Modify: `src/agent_code_analyzer/watcher.py`
@@ -214,6 +215,10 @@ File changes arrive as noisy events; they should be aggregated into a unit of wo
 - Deletes remove semantic records cleanly.
 - Unchanged neighboring scopes are preserved.
 - Move/refactor events remap lineage where possible.
+- Leaf-only mutations keep unaffected semantic records stable.
+- Refactors update every affected semantic description and retire stale locations.
+- If a leaf change alters parent meaning, the parent chain is invalidated and regenerated.
+- If a leaf change is cosmetic, parent semantic descriptions remain unchanged.
 
 ---
 
