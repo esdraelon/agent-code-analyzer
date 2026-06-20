@@ -91,7 +91,7 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 - Date: 2026-06-20 06:18 CDT
 - Milestone: 5 — Incremental fswatch diff refresh pipeline
 - Branch: feat/semantic-algorithm-m5-piecewise-refresh
-- Commit: 
+- Commit: 0071b52
 - Verification: `uv run pytest -q tests/test_projects_sqlite.py tests/test_watcher.py tests/test_vector_index.py` (`26 passed`), `uv run pytest -q` (`89 passed`)
 - Notes: Added integration coverage for changed-file refreshes, rename-as-delete-plus-add, unchanged-neighbor stability, and batching/fallback behavior in the watcher.
 
