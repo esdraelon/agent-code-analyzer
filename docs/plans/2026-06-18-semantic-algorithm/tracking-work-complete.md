@@ -127,12 +127,12 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 - Notes: Added retrieval-quality documentation, marked the milestone complete, and recorded the deterministic FakeAgent-first verification pattern.
 
 ### Milestone 8 — Operator guidance and documentation
-- Status: planned
+- Status: complete
 - Pattern: Runbook / Playbook
-- Completion evidence to collect:
-  - docs match shipped behavior
-  - users can tell when to use each mode
-  - operator guidance is concise and current
+- Date: 2026-06-20 10:58 CDT
+- Branch: feat/semantic-algorithm-m8-operator-guidance
+- Verification: `git diff --check`; `uv run pytest -q` (`91 passed`)
+- Notes: Expanded the operator prompt, added the milestone 8 runbook language, and wrote a completion handoff in `docs/complete/`.
 
 ## Completion log template
 

@@ -46,7 +46,17 @@ The guidance doc should explain:
 - when to run rebuild vs diff refresh
 - how retrieval scope should be chosen
 
-### 2. User-facing mode selection
+### 2. Operator playbook language
+
+Keep the wording practical and explicit:
+
+- semantic descriptions are the summaries attached to package/module/file/class/method/chunk scopes
+- the semantic layer complements source chunks; it does not replace them
+- use full rebuild when a pull, repair, or broad refactor can invalidate many scopes
+- use incremental refresh when the change set is local and already anchored by fswatch-style diffs
+- use `FakeAgent` for deterministic baselines, the stub backend for plumbing checks, and the real backend for live indexing
+
+### 3. User-facing mode selection
 
 Give plain rules, not architecture jargon:
 
@@ -54,7 +64,7 @@ Give plain rules, not architecture jargon:
 - use diff refresh when changes are local and incremental
 - use search when the question is exploratory or exact
 
-### 3. Document hygiene
+### 4. Document hygiene
 
 Keep the docs synchronized with the implementation state:
 
