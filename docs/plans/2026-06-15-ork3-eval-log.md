@@ -34,6 +34,41 @@ Use this file to track benchmark responses during development of the agent-code-
 
 ## Log
 
+### 2026-06-19 22:30 CDT
+
+- **Date/time:** `2026-06-19 22:30 CDT`
+- **Plan step:** `Repeatable ORK3 lexical snapshot capture`
+- **Relevant commit:** `498abf228eb38a3dbf41bd4ad494e2386033f2ea`
+- **Relevant branch:** `feat/semantic-algorithm-m3-tree-sitter-chunking`
+- **Project:** `ORK3`
+- **Query:** `mysql_real_escape_string`; `startup.php`; `common helper`
+- **Tool call:** `uv run python scripts/ork3_eval_snapshot.py`
+- **Baseline notes:** `This is the current snapshot in the time series; compare it to the previous entries for trend analysis.`
+- **Candidate notes:** `Captured live retrieval results, timing logs, and top hits for the fixed ORK3 lexical benchmark set.`
+- **Scope score:** `2`
+- **Anchoring score:** `2`
+- **Usefulness score:** `2`
+- **Compactness score:** `2`
+- **Decision:** `pass`
+- **Follow-up needed:** `Repeat the same command after each lexical milestone so the trend line stays comparable.`
+
+**Benchmark details**
+- `mysql_real_escape_string`
+  - elapsed_ms: `7906.235`
+  - result_count: `5`
+  - timing: `{'query': 'mysql_real_escape_string', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 0, 'matched': 0, 'candidate_ms': 0.542, 'scoring_ms': 0.0, 'sort_ms': 0.003, 'total_ms': 0.718}`
+  - top_hits: `[{'sqlite_uri': 'sqlite://projects/ORK3/files/3829/symbols/0', 'symbol_name': 'mysql_real_escape_string', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 4.75152956, 'file_path': 'startup.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2746/symbols/0', 'symbol_name': 'mysql_real_escape_string', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 4.25152956, 'file_path': 'startup.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2748/symbols/65', 'symbol_name': 'escape', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 1.1058831833333334, 'file_path': 'system/lib/Parsedown.php'}]`
+- `startup.php`
+  - elapsed_ms: `81.353`
+  - result_count: `5`
+  - timing: `{'query': 'startup.php', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 0, 'matched': 0, 'candidate_ms': 0.17, 'scoring_ms': 0.0, 'sort_ms': 0.001, 'total_ms': 0.256}`
+  - top_hits: `[{'sqlite_uri': 'sqlite://projects/ORK3/files/2746/symbols/0', 'symbol_name': 'mysql_real_escape_string', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 2.1673201, 'file_path': 'startup.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/3829/symbols/0', 'symbol_name': 'mysql_real_escape_string', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 1.6673201, 'file_path': 'startup.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/3910/symbols/130', 'symbol_name': 'init', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 0.8171301733333333, 'file_path': 'system/lib/phpqrcode/phpqrcode.php'}]`
+- `common helper`
+  - elapsed_ms: `79.734`
+  - result_count: `5`
+  - timing: `{'query': 'common helper', 'project': 'ORK3', 'scope_type': 'symbol', 'candidates': 0, 'matched': 0, 'candidate_ms': 0.143, 'scoring_ms': 0.0, 'sort_ms': 0.002, 'total_ms': 0.215}`
+  - top_hits: `[{'sqlite_uri': 'sqlite://projects/ORK3/files/3898/symbols/50', 'symbol_name': '_cfGraphQL', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 1.3662794600000001, 'file_path': 'system/lib/ork3/class.Report.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2815/symbols/50', 'symbol_name': '_cfGraphQL', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 0.86627946, 'file_path': 'system/lib/ork3/class.Report.php'}, {'sqlite_uri': 'sqlite://projects/ORK3/files/2780/symbols/11', 'symbol_name': 'query', 'scope_type': 'symbol', 'unit_type': 'method', 'score': 0.6627718033333333, 'file_path': 'system/lib/Yapo2/class.Yapo.php'}]`
+
 ### 2026-06-19 22:10 CDT
 
 - **Date/time:** `2026-06-19 22:10 CDT`

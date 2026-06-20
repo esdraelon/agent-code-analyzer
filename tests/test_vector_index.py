@@ -116,6 +116,13 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
     assert symbol_point.payload["start_row"] == 0
     assert symbol_point.payload["end_row"] >= symbol_point.payload["start_row"]
 
+    chunk_point = points[2]
+    assert chunk_point.payload["scope_type"] == "chunk"
+    assert chunk_point.payload["unit_type"] == "chunk"
+    assert chunk_point.payload["parent_scope_id"]
+    assert chunk_point.payload["sqlite_uri"].startswith("sqlite://projects/demo/files/7/symbols/")
+    assert chunk_point.payload["sqlite_uri"].endswith("/chunks/0")
+
 
 def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(tmp_path: Path, monkeypatch) -> None:
     _isolate_project_state(tmp_path, monkeypatch)

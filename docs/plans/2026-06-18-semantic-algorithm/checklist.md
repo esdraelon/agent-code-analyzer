@@ -33,11 +33,11 @@ Use this as the execution checklist for the milestone branch.
 - [x] Add tests for the stub path and failure path
 
 ## Milestone 3 — Tree-sitter-aware chunking and scope partitioning
-- [ ] Add AST-aware chunk boundary logic
-- [ ] Split dense methods at meaningful control-flow regions
-- [ ] Preserve parent method lineage for chunks
-- [ ] Keep small methods whole when appropriate
-- [ ] Add tests for split/no-split behavior
+- [x] Add AST-aware chunk boundary logic
+- [x] Split dense methods at meaningful control-flow regions
+- [x] Preserve parent method lineage for chunks
+- [x] Keep small methods whole when appropriate
+- [x] Add tests for split/no-split behavior
 
 ## Milestone 4 — Full-project mass ingestion
 - [ ] Walk the project root once and discover semantic scopes
