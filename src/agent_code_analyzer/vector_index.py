@@ -17,6 +17,8 @@ from .project_row_mapper import ProjectRowMapper
 from .search_filters import normalize_exclusions, should_exclude_result
 from .search_rank import build_embedding_text, tokenize_text
 from .search_scoring import DEFAULT_SEARCH_SCORER
+from .semantic_agent import SemanticWriteRequest, SemanticWriter, StubSemanticWriter
+from .semantic_descriptions import build_semantic_description_record
 from .vector_payload_factory import (
     file_payload,
     sqlite_file_uri as factory_sqlite_file_uri,
@@ -109,11 +111,14 @@ class QdrantVectorIndex:
     collection_name: str = QDRANT_DEFAULT_COLLECTION
     embedding_model: str = QDRANT_EMBEDDING_MODEL
     embedding_provider: EmbeddingProvider | None = field(default=None, repr=False)
+    semantic_writer: SemanticWriter | None = field(default=None, repr=False)
     _client: QdrantClient | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.embedding_provider is None:
             self.embedding_provider = get_embedding_provider()
+        if self.semantic_writer is None:
+            self.semantic_writer = StubSemanticWriter()
 
     @property
     def vector_size(self) -> int:
@@ -141,6 +146,54 @@ class QdrantVectorIndex:
     def _embed_query(self, text: str) -> list[float]:
         assert self.embedding_provider is not None
         return self.embedding_provider.embed_query(text)
+
+    def _semantic_description_fields(self, result: Any) -> dict[str, Any]:
+        fields: dict[str, Any] = {
+            "semantic_description_state": "no_response" if getattr(result, "is_no_response", False) else "description",
+            "semantic_description_backend": getattr(result, "backend", ""),
+        }
+        description_text = getattr(result, "description_text", None)
+        if description_text:
+            fields["description_text"] = description_text
+        return fields
+
+    def _write_semantic_description(
+        self,
+        *,
+        project: str,
+        scope_type: str,
+        file_path: str,
+        source_text: str,
+        outline_text: str,
+        line_start: int | None,
+        line_end: int | None,
+        symbol_path: str | None = None,
+        parent_scope_id: str | None = None,
+        source_kind: str = "tree-sitter",
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        record = build_semantic_description_record(
+            project=project,
+            scope_type=scope_type,
+            file_path=file_path,
+            description_text="",
+            source_fingerprint=_content_hash(source_text),
+            symbol_path=symbol_path,
+            line_start=line_start,
+            line_end=line_end,
+            parent_scope_id=parent_scope_id,
+            source_kind=source_kind,
+            metadata=metadata or {},
+        )
+        request = SemanticWriteRequest(
+            record=record,
+            source_text=source_text,
+            outline_text=outline_text,
+            metadata=metadata or {},
+        )
+        writer = self.semantic_writer
+        assert writer is not None
+        return writer.write(request)
 
     def _make_point(
         self,
@@ -381,6 +434,18 @@ class QdrantVectorIndex:
             chunk_text=source_text,
             source_kind="file",
         )
+        file_description = self._write_semantic_description(
+            project=project,
+            scope_type="file",
+            file_path=file_path,
+            source_text=source_text,
+            outline_text=str(analysis.get("skeleton", "")),
+            line_start=int(root_node.start_point[0]),
+            line_end=int(root_node.end_point[0]),
+            source_kind="tree-sitter",
+            metadata={"root_type": root_node.type, "language": parsed.language},
+        )
+        file_payload.update(self._semantic_description_fields(file_description))
         points = [
             qmodels.PointStruct(
                 id=_stable_point_id(file_payload["sqlite_uri"]),
@@ -405,6 +470,20 @@ class QdrantVectorIndex:
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
             )
+            symbol_description = self._write_semantic_description(
+                project=project,
+                scope_type=_normalize_unit_type(str(symbol_ordered.get("type", ""))),
+                file_path=file_path,
+                source_text=chunk_text or source_text,
+                outline_text=str(symbol_ordered.get("signature", "")),
+                line_start=symbol_ordered.get("start_point", {}).get("row"),
+                line_end=symbol_ordered.get("end_point", {}).get("row"),
+                symbol_path=str(symbol_ordered.get("name", "")) or None,
+                parent_scope_id=None,
+                source_kind="tree-sitter",
+                metadata={"symbol_type": symbol_ordered.get("type", "")},
+            )
+            payload.update(self._semantic_description_fields(symbol_description))
             symbol_embedding_text = build_embedding_text(
                 file_path=file_path,
                 symbol_name=str(symbol_ordered.get("name", "")),
@@ -450,6 +529,18 @@ class QdrantVectorIndex:
             chunk_text=str(file_record.get("skeleton", "")),
             source_kind="file",
         )
+        file_description = self._write_semantic_description(
+            project=project,
+            scope_type="file",
+            file_path=file_path,
+            source_text=str(file_record.get("skeleton", "")) or file_path,
+            outline_text=f"{str(file_record.get('root_type', ''))}\n{str(file_record.get('skeleton', ''))}",
+            line_start=int(file_record.get("start_point", {}).get("row", 0)),
+            line_end=int(file_record.get("end_point", {}).get("row", 0)),
+            source_kind="tree-sitter",
+            metadata={"root_type": file_record.get("root_type", ""), "language": file_record["language"]},
+        )
+        file_payload.update(self._semantic_description_fields(file_description))
         file_embedding_text = build_embedding_text(
             file_path=file_path,
             skeleton=f"{str(file_record.get('root_type', ''))}\n{str(file_record.get('skeleton', ''))}",
@@ -477,6 +568,20 @@ class QdrantVectorIndex:
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
             )
+            symbol_description = self._write_semantic_description(
+                project=project,
+                scope_type=_normalize_unit_type(str(symbol_ordered.get("type", ""))),
+                file_path=file_path,
+                source_text=chunk_text or file_path,
+                outline_text=str(symbol_ordered.get("signature", "")),
+                line_start=symbol_ordered.get("start_point", {}).get("row"),
+                line_end=symbol_ordered.get("end_point", {}).get("row"),
+                symbol_path=str(symbol_ordered.get("name", "")) or None,
+                parent_scope_id=None,
+                source_kind="tree-sitter",
+                metadata={"symbol_type": symbol_ordered.get("type", "")},
+            )
+            payload.update(self._semantic_description_fields(symbol_description))
             symbol_embedding_text = build_embedding_text(
                 file_path=file_path,
                 symbol_name=str(symbol_ordered.get("name", "")),

@@ -37,12 +37,15 @@ This file is the living progress tracker for the semantic algorithm plan. Update
   - repo coverage run completed: `92% total`, `11 passed` for the new semantic model tests, `78 passed` overall
 
 ### Milestone 2 — Semantic writer abstraction with a stub backend
-- Status: planned
+- Status: complete
 - Pattern: Strategy + Null Object + Adapter
-- Completion evidence to collect:
-  - stub sentinel path verified
-  - transport-failure path distinguished from deliberate no-op
-  - caller integration covered by tests
+- Completion evidence:
+  - `SemanticWriter` and `SemanticWriteRequest`/`SemanticWriteResult` implemented in `src/agent_code_analyzer/semantic_agent.py`
+  - `NO_SEMANTIC_DESCRIPTION` sentinel verified
+  - transport failure raises `SemanticTransportError`
+  - `QdrantVectorIndex` now calls the semantic writer from both live-analysis and bootstrap paths
+  - targeted tests added in `tests/test_semantic_agent.py`
+  - repo coverage run completed: `92% total`, `83 passed` overall
 
 ### Milestone 3 — Tree-sitter chunking and scope partitioning
 - Status: planned
