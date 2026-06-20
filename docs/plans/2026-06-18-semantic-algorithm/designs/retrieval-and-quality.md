@@ -62,6 +62,8 @@ Use a repeatable query set and compare outputs against expectations for:
 - latency
 - noise level
 
+Run the harness against `FakeAgent` first so the baseline snapshots are deterministic. Once the harness is stable, repeat the same checks against a real backend to measure behavior under provider variance.
+
 ## Proposed file responsibilities
 
 - `src/agent_code_analyzer/vector_index.py`

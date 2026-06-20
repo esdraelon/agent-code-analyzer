@@ -256,7 +256,7 @@
 
 ## Milestone 7 — Retrieval and quality checks for the semantic description layer
 
-**Status:** planned
+**Status:** complete
 
 **Purpose:** Make the semantic descriptions searchable and verify that level-specific summaries are useful.
 
@@ -268,6 +268,7 @@
 5. The system shall support tests or checks that validate retrieval quality.
 6. The stub path shall remain acceptable during early development.
 7. Retrieval shall work in both full-ingestion and incremental-refresh modes.
+8. The repeatable retrieval quality harness shall use `FakeAgent` or another deterministic backend before real-provider variance is introduced.
 
 ### Acceptance criteria
 - Package/module/file results emphasize architecture and intent.
@@ -311,6 +312,42 @@
 
 ---
 
+## Milestone 9 — Global agent rate limiting and semantic freshness lifecycle
+
+**Status:** planned
+
+**Purpose:** Protect the service from provider throttling while keeping search honest about semantic records that are dirty, obsolete, or in flight during fswatch-driven updates.
+
+### Requirements
+1. The service shall enforce one global rate limit across all agent calls.
+2. The agent abstraction shall normalize provider-specific rate-limit signals into a common shape.
+3. Each concrete agent backend shall implement its own retry-after, backoff, and quota-handling details.
+4. Each semantic unit shall track freshness state and a relevance marker, at minimum distinguishing fresh, dirty, and obsolete records.
+5. Fswatch deltas shall mark affected semantic units dirty or obsolete before refresh work begins.
+6. Successful refresh shall mark a semantic unit fresh and relevant only when the observed source revision or content hash still matches the current source state.
+7. The update path shall use revision/hash guards or equivalent compare-and-swap protection so an in-flight refresh cannot overwrite a newer dirty mark.
+8. Search shall continue returning dirty or obsolete semantic units, but those results shall be marked as potentially inaccurate.
+
+### Acceptance criteria
+- Concurrent agent calls respect one shared service-wide limiter.
+- Provider throttling is translated into a normalized retry signal at the abstraction boundary.
+- Dirty or obsolete records remain searchable with an explicit stale warning.
+- A later fswatch delta cannot be accidentally erased by an older refresh completion.
+- Tests cover limiter behavior, freshness promotion, and stale-hit surfacing.
+
+### Implementation surfaces
+- `src/agent_code_analyzer/agents/base.py`
+- `src/agent_code_analyzer/agents/fake.py`
+- `src/agent_code_analyzer/agents/hermes.py`
+- `src/agent_code_analyzer/watcher.py`
+- `src/agent_code_analyzer/vector_index.py`
+- `src/agent_code_analyzer/search_filters.py` if the result envelope needs a staleness flag
+- `tests/test_agents.py`
+- `tests/test_watcher.py`
+- `tests/test_vector_index.py`
+
+---
+
 ## Implementation order
 
 1. Agent abstraction and Hermes adapter POC
@@ -322,6 +359,7 @@
 7. MCP surface
 8. Retrieval and quality checks
 9. Documentation and operator guidance
+10. Global agent rate limiting and semantic freshness lifecycle
 
 ---
 
@@ -332,6 +370,10 @@
 - The system shall not replace source chunks with summaries.
 - The writer interface shall remain swappable.
 - All record-level updates shall remain line-anchored where possible.
+- The service shall apply a global rate limit to agent calls.
+- Rate-limit signals from provider services shall be normalized at the agent abstraction boundary.
+- Dirty and obsolete semantic records shall remain searchable and explicitly marked as potentially inaccurate.
+- State promotion shall be guarded by source revision or content hash checks to avoid in-flight refresh races.
 - The requirements doc shall stay milestone-oriented so future implementation work can be tracked against it.
 
 ---
@@ -343,4 +385,6 @@
 - Full rebuild and incremental refresh both work.
 - Tree-sitter chunking produces stable and useful chunks.
 - Semantic retrieval works without breaking existing search paths.
+- Agent calls honor a shared service-wide rate limit.
+- Freshness transitions keep stale records searchable without pretending they are current.
 - The documentation explains the workflow clearly enough for the next implementation pass.
