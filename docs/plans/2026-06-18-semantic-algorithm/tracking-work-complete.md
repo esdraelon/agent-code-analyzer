@@ -27,7 +27,7 @@ This file is the living progress tracker for the semantic algorithm plan. Update
   - full test suite passes: `67 passed`
 
 ### Milestone 1 — Semantic record model and stable identities
-- Status: planned
+- Status: in progress
 - Pattern: Value Object + Data Mapper
 - Completion evidence to collect:
   - record schema documented
