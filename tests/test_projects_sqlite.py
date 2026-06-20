@@ -55,6 +55,7 @@ def test_ingest_project_tree_refresh_rebuilds_every_supported_file(tmp_path: Pat
 
         def sync_records(self, **kwargs) -> dict[str, Any]:
             self.sync_calls.append(kwargs)
+            self.delete_file(f"sqlite://projects/{kwargs['project']}/files/{kwargs['file_id']}")
             return {"points": len(kwargs.get("symbol_rows", [])) + 1}
 
         def delete_file(self, sqlite_uri: str) -> None:
@@ -162,6 +163,7 @@ def test_sync_project_tree_tracks_changed_and_deleted_files(tmp_path: Path, monk
 
         def sync_records(self, **kwargs) -> dict[str, Any]:
             self.sync_calls.append(kwargs)
+            self.delete_file(f"sqlite://projects/{kwargs['project']}/files/{kwargs['file_id']}")
             return {"points": len(kwargs.get("symbol_rows", [])) + 1}
 
         def delete_file(self, sqlite_uri: str) -> None:
@@ -183,6 +185,8 @@ def test_sync_project_tree_tracks_changed_and_deleted_files(tmp_path: Path, monk
     added = add_project("sync", str(root), mode="directory")
     assert added["ingest"]["file_count"] == 2
 
+    fake_index.deleted_files.clear()
+
     beta.unlink()
     alpha.write_text("def alpha():\n    return 10\n", encoding="utf-8")
 
@@ -191,7 +195,7 @@ def test_sync_project_tree_tracks_changed_and_deleted_files(tmp_path: Path, monk
     assert summary["changed_file_count"] == 1
     assert summary["deleted_file_count"] == 1
     assert summary["unchanged_file_count"] == 0
-    assert fake_index.deleted_files == ["sqlite://projects/sync/files/2"]
+    assert fake_index.deleted_files == ["sqlite://projects/sync/files/1", "sqlite://projects/sync/files/2"]
 
     db_path = Path(added["db_path"])
     with sqlite3.connect(db_path) as conn:
@@ -204,6 +208,121 @@ def test_sync_project_tree_tracks_changed_and_deleted_files(tmp_path: Path, monk
             ("sync",),
         ).fetchone()
         assert project_state == (1, 1, 1)
+
+
+def test_sync_project_tree_refreshes_only_changed_file_and_keeps_neighbors_stable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    projects = _isolate_project_state(tmp_path, monkeypatch)
+
+    class FakeVectorIndex:
+        def __init__(self) -> None:
+            self.sync_calls: list[dict[str, Any]] = []
+            self.deleted_files: list[str] = []
+
+        def sync_records(self, **kwargs) -> dict[str, Any]:
+            self.sync_calls.append(kwargs)
+            self.delete_file(f"sqlite://projects/{kwargs['project']}/files/{kwargs['file_id']}")
+            return {"points": len(kwargs.get("symbol_rows", [])) + 1}
+
+        def delete_file(self, sqlite_uri: str) -> None:
+            self.deleted_files.append(sqlite_uri)
+
+        def delete_project(self, project: str) -> None:
+            return None
+
+    fake_index = FakeVectorIndex()
+    monkeypatch.setattr("agent_code_analyzer.vector_index.get_vector_index", lambda: fake_index)
+
+    root = tmp_path / "leaf"
+    root.mkdir()
+    alpha = root / "alpha.py"
+    beta = root / "beta.py"
+    alpha.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    beta.write_text("def beta():\n    return 2\n", encoding="utf-8")
+
+    added = add_project("leaf", str(root), mode="directory")
+    assert added["ingest"]["file_count"] == 2
+
+    fake_index.sync_calls.clear()
+    fake_index.deleted_files.clear()
+
+    db_path = Path(added["db_path"])
+    with sqlite3.connect(db_path) as conn:
+        before_beta_hash = conn.execute(
+            "SELECT file_content_hash FROM files WHERE rel_path = ?",
+            ("beta.py",),
+        ).fetchone()[0]
+
+    alpha.write_text("def alpha():\n    return 10\n", encoding="utf-8")
+
+    summary = projects.sync_project_tree("leaf")
+
+    assert summary["changed_file_count"] == 1
+    assert summary["deleted_file_count"] == 0
+    assert summary["unchanged_file_count"] == 1
+    assert [call["file_record"]["path"] for call in fake_index.sync_calls] == ["alpha.py"]
+    assert [call["file_id"] for call in fake_index.sync_calls] == [1]
+    assert fake_index.deleted_files == ["sqlite://projects/leaf/files/1"]
+
+    with sqlite3.connect(db_path) as conn:
+        beta_hash = conn.execute(
+            "SELECT file_content_hash FROM files WHERE rel_path = ?",
+            ("beta.py",),
+        ).fetchone()[0]
+
+    assert beta_hash == before_beta_hash
+
+
+def test_sync_project_tree_treats_rename_as_delete_and_add(tmp_path: Path, monkeypatch) -> None:
+    projects = _isolate_project_state(tmp_path, monkeypatch)
+
+    class FakeVectorIndex:
+        def __init__(self) -> None:
+            self.sync_calls: list[dict[str, Any]] = []
+            self.deleted_files: list[str] = []
+
+        def sync_records(self, **kwargs) -> dict[str, Any]:
+            self.sync_calls.append(kwargs)
+            self.delete_file(f"sqlite://projects/{kwargs['project']}/files/{kwargs['file_id']}")
+            return {"points": len(kwargs.get("symbol_rows", [])) + 1}
+
+        def delete_file(self, sqlite_uri: str) -> None:
+            self.deleted_files.append(sqlite_uri)
+
+        def delete_project(self, project: str) -> None:
+            return None
+
+    fake_index = FakeVectorIndex()
+    monkeypatch.setattr("agent_code_analyzer.vector_index.get_vector_index", lambda: fake_index)
+
+    root = tmp_path / "rename"
+    root.mkdir()
+    original = root / "original.py"
+    renamed = root / "renamed.py"
+    original.write_text("def original():\n    return 1\n", encoding="utf-8")
+
+    added = add_project("rename", str(root), mode="directory")
+    assert added["ingest"]["file_count"] == 1
+
+    fake_index.sync_calls.clear()
+    fake_index.deleted_files.clear()
+
+    original.rename(renamed)
+
+    summary = projects.sync_project_tree("rename")
+
+    assert summary["changed_file_count"] == 1
+    assert summary["deleted_file_count"] == 1
+    assert summary["file_count"] == 1
+    assert [call["file_record"]["path"] for call in fake_index.sync_calls] == ["renamed.py"]
+    assert fake_index.deleted_files == ["sqlite://projects/rename/files/2", "sqlite://projects/rename/files/1"]
+
+    with sqlite3.connect(Path(added["db_path"])) as conn:
+        rel_paths = [row[0] for row in conn.execute("SELECT rel_path FROM files ORDER BY rel_path ASC").fetchall()]
+
+    assert rel_paths == ["renamed.py"]
 
 
 def test_project_sync_diff_uses_content_hash_to_detect_drift(tmp_path: Path) -> None:

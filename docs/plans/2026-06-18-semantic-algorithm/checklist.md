@@ -47,14 +47,14 @@ Use this as the execution checklist for the milestone branch.
 - [x] Add tests for duplicate avoidance and stable counts
 
 ## Milestone 5 — Piecewise updates from fswatch diffs
-- [ ] Batch noisy file-system events into one update window
-- [ ] Normalize add/modify/delete/move events
-- [ ] Map changed lines back to the owning semantic scope
-- [ ] Invalidate and replace affected records only
-- [ ] Add integration tests for edit/delete/move/fallback cases
-- [ ] Add integration tests for leaf-only mutations that must leave untouched scopes stable
-- [ ] Add integration tests for refactors that must update every affected semantic description
-- [ ] Add integration tests for parent-meaning drift that must invalidate ancestor scopes
+- [x] Batch noisy file-system events into one update window
+- [x] Normalize add/modify/delete/move events
+- [x] Map changed lines back to the owning semantic scope
+- [x] Invalidate and replace affected records only
+- [x] Add integration tests for edit/delete/move/fallback cases
+- [x] Add integration tests for leaf-only mutations that must leave untouched scopes stable
+- [x] Add integration tests for refactors that must update every affected semantic description
+- [x] Add integration tests for parent-meaning drift that must invalidate ancestor scopes
 
 ## Milestone 6 — MCP surface for semantic description indexing
 - [ ] Expose a full rebuild command

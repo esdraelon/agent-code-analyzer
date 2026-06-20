@@ -188,7 +188,7 @@ The ingestion flow has a stable order: scan scopes, build context, generate desc
 
 ## Milestone 5: Incremental fswatch diff refresh pipeline
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Refresh only the impacted semantic records when files change, instead of rebuilding the whole project.
 
