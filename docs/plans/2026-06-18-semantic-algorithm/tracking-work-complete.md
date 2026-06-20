@@ -48,12 +48,21 @@ This file is the living progress tracker for the semantic algorithm plan. Update
   - repo coverage run completed: `92% total`, `83 passed` overall
 
 ### Milestone 3 — Tree-sitter chunking and scope partitioning
-- Status: planned
+- Status: complete
 - Pattern: Composite + Recursive Descent + Strategy
-- Completion evidence to collect:
-  - long methods split at AST boundaries
-  - chunk lineage preserved
-  - small methods remain whole
+- Completion evidence:
+  - `src/agent_code_analyzer/semantic_chunking.py` implements AST-aware method chunk spans
+  - `QdrantVectorIndex` now emits chunk records for method/function scopes during live sync and bootstrap
+  - `tests/test_semantic_chunking.py` covers single-chunk and multi-chunk behavior
+  - repo coverage run completed: `92% total`, `85 passed` overall
+  - ORK3 snapshot suite completed successfully on the milestone branch
+
+- Date: 2026-06-19 22:30 CDT
+- Milestone: 3 — Tree-sitter-aware chunking and scope partitioning
+- Branch: feat/semantic-algorithm-m3-tree-sitter-chunking
+- Commit: 26a09e5
+- Verification: `uv run pytest -q --cov=src/agent_code_analyzer --cov-report=term-missing` (`85 passed`, `92% total`)
+- Notes: Added AST-aware method chunk spans, emitted chunk records during live sync and bootstrap, and kept small methods as a single chunk.
 
 ### Milestone 4 — Full-project mass ingestion pipeline
 - Status: planned

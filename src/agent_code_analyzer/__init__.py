@@ -10,6 +10,7 @@ from .semantic_agent import (
     StubSemanticWriter,
     is_no_semantic_description,
 )
+from .semantic_chunking import SemanticChunkSpan, build_method_chunk_spans
 from .semantic_descriptions import (
     SemanticDescriptionMapper,
     SemanticDescriptionRecord,
@@ -25,6 +26,7 @@ __all__ = [
     "NO_SEMANTIC_DESCRIPTION",
     "AgentSemanticWriter",
     "NoSemanticDescription",
+    "SemanticChunkSpan",
     "SemanticDescriptionMapper",
     "SemanticDescriptionRecord",
     "SemanticTransportError",
@@ -34,6 +36,7 @@ __all__ = [
     "SCOPE_LEVELS",
     "StubSemanticWriter",
     "UPDATE_MODES",
+    "build_method_chunk_spans",
     "build_semantic_description_record",
     "build_semantic_scope_id",
     "is_no_semantic_description",

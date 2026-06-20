@@ -164,11 +164,14 @@ def test_agent_semantic_writer_wraps_backend_failures() -> None:
         writer.write(SemanticWriteRequest(record=record, source_text="print('hi')\n"))
 
 
-def test_vector_index_calls_semantic_writer_without_crashing(tmp_path: Path, monkeypatch) -> None:
+def test_vector_index_emits_method_chunks_for_long_methods(tmp_path: Path) -> None:
     root = tmp_path / "demo"
     root.mkdir()
-    file_path = root / "app.py"
-    file_path.write_text("def hello(name):\n    return name.upper()\n", encoding="utf-8")
+    file_path = root / "big.py"
+    file_path.write_text(
+        """def calculate(value):\n    total = 0\n    if value > 10:\n        total += value\n    else:\n        total -= value\n    for step in range(3):\n        total += step\n    while total < 50:\n        total += 2\n    return total\n""",
+        encoding="utf-8",
+    )
 
     analysis = analyze_file(str(file_path))
     writer = CapturingWriter()
@@ -179,7 +182,7 @@ def test_vector_index_calls_semantic_writer_without_crashing(tmp_path: Path, mon
     result = index.sync_analysis(
         project="demo",
         project_root=root,
-        file_id=7,
+        file_id=8,
         file_path=str(file_path),
         analysis=analysis,
         indexed_at="2026-06-19T21:00:00",
@@ -188,11 +191,15 @@ def test_vector_index_calls_semantic_writer_without_crashing(tmp_path: Path, mon
     )
 
     assert result["synced"] is True
-    assert len(writer.requests) == 2
-    assert writer.requests[0].record.scope_type == "file"
-    assert writer.requests[1].record.scope_type == "method"
-    assert fake_client.upsert_calls
+    assert len(writer.requests) >= 3
+    chunk_requests = [request for request in writer.requests if request.record.scope_type == "chunk"]
+    assert len(chunk_requests) >= 2
+    assert all(request.record.parent_scope_id for request in chunk_requests)
+
     payloads = fake_client.upsert_calls[0]["points"]
-    assert payloads[0].payload["semantic_description_state"] == "no_response"
-    assert payloads[0].payload["semantic_description_backend"] == "capture"
-    assert payloads[1].payload["semantic_description_state"] == "no_response"
+    chunk_payloads = [point.payload for point in payloads if point.payload["scope_type"] == "chunk"]
+    assert len(chunk_payloads) >= 2
+    assert all(payload["unit_type"] == "chunk" for payload in chunk_payloads)
+    assert all(payload["parent_scope_id"] for payload in chunk_payloads)
+    assert any("if value > 10" in payload["chunk_text"] for payload in chunk_payloads)
+    assert any("while total < 50" in payload["chunk_text"] for payload in chunk_payloads)

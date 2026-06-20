@@ -12,12 +12,14 @@ from qdrant_client import QdrantClient, models as qmodels
 
 from . import project_storage as storage
 from .embedding_provider import EmbeddingProvider, get_embedding_provider
+from .parsing import analyze_file
 from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
 from .search_filters import normalize_exclusions, should_exclude_result
 from .search_rank import build_embedding_text, tokenize_text
 from .search_scoring import DEFAULT_SEARCH_SCORER
 from .semantic_agent import SemanticWriteRequest, SemanticWriter, StubSemanticWriter
+from .semantic_chunking import build_method_chunk_spans
 from .semantic_descriptions import build_semantic_description_record
 from .vector_payload_factory import (
     file_payload,
@@ -46,6 +48,10 @@ def _sqlite_file_uri(project: str, file_id: int) -> str:
 
 def _sqlite_symbol_uri(project: str, file_id: int, symbol_order: int) -> str:
     return f"{factory_sqlite_file_uri(project, file_id)}/symbols/{symbol_order}"
+
+
+def _sqlite_chunk_uri(project: str, file_id: int, symbol_order: int, chunk_order: int) -> str:
+    return f"{_sqlite_symbol_uri(project, file_id, symbol_order)}/chunks/{chunk_order}"
 
 
 def _stable_point_id(sqlite_uri: str) -> str:
@@ -157,6 +163,69 @@ class QdrantVectorIndex:
             fields["description_text"] = description_text
         return fields
 
+    def _chunk_payload(
+        self,
+        *,
+        project: str,
+        project_root: str,
+        file_id: int,
+        file_path: str,
+        file_language: str,
+        file_languages: list[str],
+        indexed_at: str,
+        chunk_text: str,
+        parent_symbol: dict[str, Any],
+        chunk_index: int,
+        chunk_total: int,
+        line_start: int,
+        line_end: int,
+        split_reason: str,
+        parent_scope_id: str,
+    ) -> dict[str, Any]:
+        symbol_order = int(parent_symbol.get("symbol_order", parent_symbol.get("order", 0)))
+        sqlite_file_uri_value = factory_sqlite_file_uri(project, file_id)
+        sqlite_symbol_uri_value = _sqlite_symbol_uri(project, file_id, symbol_order)
+        sqlite_uri = _sqlite_chunk_uri(project, file_id, symbol_order, chunk_index)
+        parent_symbol_name = str(parent_symbol.get("name", ""))
+        parent_symbol_type = str(parent_symbol.get("type", ""))
+        return {
+            "project_name": project,
+            "project_root": project_root,
+            "file_id": file_id,
+            "sqlite_file_id": file_id,
+            "file_path": file_path,
+            "language": file_language,
+            "languages": file_languages,
+            "scope_type": "chunk",
+            "source_kind": "chunk",
+            "unit_type": "chunk",
+            "symbol_id": parent_symbol.get("sqlite_symbol_id", parent_symbol.get("id")),
+            "sqlite_symbol_id": parent_symbol.get("sqlite_symbol_id", parent_symbol.get("id")),
+            "symbol_order": symbol_order,
+            "symbol_name": parent_symbol_name,
+            "symbol_type": parent_symbol_type,
+            "parent_scope_id": parent_scope_id,
+            "parent_symbol_name": parent_symbol_name,
+            "parent_symbol_type": parent_symbol_type,
+            "parent_symbol_order": symbol_order,
+            "chunk_index": chunk_index,
+            "chunk_total": chunk_total,
+            "chunk_strategy": split_reason,
+            "start_row": line_start,
+            "start_column": 0,
+            "end_row": line_end,
+            "end_column": 0,
+            "sqlite_uri": sqlite_uri,
+            "sqlite_file_uri": sqlite_file_uri_value,
+            "sqlite_symbol_uri": sqlite_symbol_uri_value,
+            "sqlite_project_uri": f"sqlite://projects/{_slug_component(project)}",
+            "indexed_at": indexed_at,
+            "content_hash": _content_hash(chunk_text),
+            "chunk_text": chunk_text,
+            "content_text": chunk_text,
+            "signature": str(parent_symbol.get("signature", "")),
+        }
+
     def _write_semantic_description(
         self,
         *,
@@ -194,6 +263,87 @@ class QdrantVectorIndex:
         writer = self.semantic_writer
         assert writer is not None
         return writer.write(request)
+
+    def _build_chunk_points(
+        self,
+        *,
+        parsed: Any,
+        project: str,
+        project_root: str,
+        file_id: int,
+        file_path: str,
+        file_language: str,
+        file_languages: list[str],
+        indexed_at: str,
+        parent_symbol: dict[str, Any],
+        parent_description: Any,
+    ) -> list[qmodels.PointStruct]:
+        parent_scope_id = getattr(getattr(parent_description, "request", None), "record", None)
+        parent_scope_id_text = getattr(parent_scope_id, "scope_id", None)
+        if not parent_scope_id_text:
+            return []
+        chunk_spans = build_method_chunk_spans(parsed, parent_symbol)
+        if not chunk_spans:
+            return []
+
+        points: list[qmodels.PointStruct] = []
+        parent_symbol_name = str(parent_symbol.get("name", "")) or None
+        symbol_path_root = parent_symbol_name or str(parent_symbol.get("type", "method"))
+        for chunk in chunk_spans:
+            chunk_symbol_path = f"{symbol_path_root}::chunk-{chunk.chunk_index}"
+            chunk_description = self._write_semantic_description(
+                project=project,
+                scope_type="chunk",
+                file_path=file_path,
+                source_text=chunk.chunk_text or file_path,
+                outline_text=chunk.outline_text,
+                line_start=chunk.line_start,
+                line_end=chunk.line_end,
+                symbol_path=chunk_symbol_path,
+                parent_scope_id=parent_scope_id_text,
+                source_kind="tree-sitter",
+                metadata={
+                    "chunk_index": chunk.chunk_index,
+                    "chunk_total": chunk.chunk_total,
+                    "split_reason": chunk.split_reason,
+                    "is_split": chunk.is_split,
+                    "statement_count": chunk.statement_count,
+                    "parent_symbol_type": str(parent_symbol.get("type", "")),
+                },
+            )
+            payload = self._chunk_payload(
+                project=project,
+                project_root=project_root,
+                file_id=file_id,
+                file_path=file_path,
+                file_language=file_language,
+                file_languages=file_languages,
+                indexed_at=indexed_at,
+                chunk_text=chunk.chunk_text or file_path,
+                parent_symbol=parent_symbol,
+                chunk_index=chunk.chunk_index,
+                chunk_total=chunk.chunk_total,
+                line_start=chunk.line_start,
+                line_end=chunk.line_end,
+                split_reason=chunk.split_reason,
+                parent_scope_id=parent_scope_id_text,
+            )
+            payload.update(self._semantic_description_fields(chunk_description))
+            points.append(
+                qmodels.PointStruct(
+                    id=_stable_point_id(payload["sqlite_uri"]),
+                    vector=self._embed_document(
+                        build_embedding_text(
+                            file_path=file_path,
+                            symbol_name=parent_symbol_name or "",
+                            signature=chunk.outline_text,
+                            source_text=chunk.chunk_text,
+                        )
+                    ),
+                    payload=payload,
+                )
+            )
+        return points
 
     def _make_point(
         self,
@@ -497,6 +647,22 @@ class QdrantVectorIndex:
                     payload=payload,
                 )
             )
+
+            if _normalize_unit_type(str(symbol_ordered.get("type", ""))) == "method":
+                points.extend(
+                    self._build_chunk_points(
+                        parsed=parsed,
+                        project=project,
+                        project_root=project_root,
+                        file_id=file_id,
+                        file_path=file_path,
+                        file_language=parsed.language,
+                        file_languages=file_languages,
+                        indexed_at=indexed_at,
+                        parent_symbol=symbol_ordered,
+                        parent_description=symbol_description,
+                    )
+                )
         return points
 
     def _build_points_from_records(
@@ -511,6 +677,13 @@ class QdrantVectorIndex:
         indexed_at = str(file_record.get("indexed_at") or storage._now())
         file_path = str(file_record["path"])
         file_languages = list(file_record.get("languages", [file_record["language"]]))
+        parsed = None
+        abs_path = str(file_record.get("abs_path") or "")
+        if abs_path and Path(abs_path).exists():
+            try:
+                parsed = analyze_file(abs_path)["parsed"]
+            except Exception:
+                parsed = None
         file_payload = self._file_payload(
             project=project,
             project_root=project_root,
@@ -594,6 +767,22 @@ class QdrantVectorIndex:
                     payload=payload,
                 )
             )
+
+            if parsed is not None and _normalize_unit_type(str(symbol_ordered.get("type", ""))) == "method":
+                points.extend(
+                    self._build_chunk_points(
+                        parsed=parsed,
+                        project=project,
+                        project_root=project_root,
+                        file_id=file_id,
+                        file_path=file_path,
+                        file_language=str(file_record["language"]),
+                        file_languages=file_languages,
+                        indexed_at=indexed_at,
+                        parent_symbol=symbol_ordered,
+                        parent_description=symbol_description,
+                    )
+                )
         return points
 
     def sync_analysis(
