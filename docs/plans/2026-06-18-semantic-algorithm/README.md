@@ -4,7 +4,8 @@ This folder contains the working plan, tracking ledger, and per-feature design n
 
 ## Document map
 
-- `implementation-plan.md` — milestone plan and implementation order
+- `requirements.md` — low-level milestone-by-milestone requirements doc
+- `implementation-plan.md` — original milestone plan and implementation order
 - `tracking-work-complete.md` — living progress ledger and completion evidence
 - `designs/record-model.md` — record schema and identity design
 - `designs/agent-abstraction.md` — general agent abstraction, Hermes shell/lib adapters, and fake strategy
@@ -19,9 +20,10 @@ This folder contains the working plan, tracking ledger, and per-feature design n
 
 ## Reading order
 
-1. Read `implementation-plan.md` for the milestone sequence and pattern choices.
-2. Use the matching design doc for the feature you are changing.
-3. Update `tracking-work-complete.md` as work lands.
+1. Read `requirements.md` for the milestone-by-milestone requirements.
+2. Use `implementation-plan.md` only if you need the original implementation ordering and pattern summary.
+3. Use the matching design doc for the feature you are changing.
+4. Update `tracking-work-complete.md` as work lands.
 
 ## Source of truth
 
