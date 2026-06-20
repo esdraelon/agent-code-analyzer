@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Protocol
+
+from ..rate_limit import RateLimitError, get_global_rate_limiter, normalized_rate_limit_signal, sleep_for_signal
 
 AgentKind = Literal["fake", "hermes-shell", "hermes-lib"]
 ResponseFormat = Literal["text", "json"]
@@ -47,6 +49,16 @@ class BaseAgent(ABC):
 
     def __init__(self, *, log_dir: str | Path | None = None) -> None:
         self.log_dir = Path(log_dir) if log_dir is not None else None
+
+    def _rate_limit_context(self):
+        return get_global_rate_limiter().acquire()
+
+    def _raise_rate_limited(self, error: Exception, *, backend: str) -> None:
+        signal = normalized_rate_limit_signal(error, backend=backend)
+        if signal is None:
+            raise error
+        sleep_for_signal(signal)
+        raise RateLimitError(signal) from error
 
     def _normalized_metadata(self, request: AgentRequest, **extra: Any) -> dict[str, Any]:
         payload = dict(request.metadata)

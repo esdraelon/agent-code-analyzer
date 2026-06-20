@@ -27,13 +27,14 @@ class FakeAgent(BaseAgent):
         return self.placeholder
 
     def complete(self, request: AgentRequest) -> AgentResponse:
-        parsed = self._fake_parsed_output(request)
-        response = AgentResponse(
-            content=self.placeholder,
-            agent_kind="fake",
-            raw_output=self.placeholder,
-            parsed=parsed,
-            metadata=self._normalized_metadata(request, placeholder=self.placeholder),
-        )
-        self._write_jsonl(self._request_record(request, backend="fake", response=response.content))
-        return response
+        with self._rate_limit_context():
+            parsed = self._fake_parsed_output(request)
+            response = AgentResponse(
+                content=self.placeholder,
+                agent_kind="fake",
+                raw_output=self.placeholder,
+                parsed=parsed,
+                metadata=self._normalized_metadata(request, placeholder=self.placeholder),
+            )
+            self._write_jsonl(self._request_record(request, backend="fake", response=response.content))
+            return response

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .freshness import get_freshness_registry
 from .projects import list_projects, sync_project_tree
 
 
@@ -24,6 +25,7 @@ class DirtyProjectQueue:
         current = self._now(now)
         with self._lock:
             self._dirty_until[project] = current + self.debounce_seconds
+        get_freshness_registry().mark_dirty(project)
 
     def mark_many_dirty(self, projects: Iterable[str], now: float | None = None) -> None:
         current = self._now(now)
@@ -31,6 +33,7 @@ class DirtyProjectQueue:
             due_at = current + self.debounce_seconds
             for project in projects:
                 self._dirty_until[project] = due_at
+                get_freshness_registry().mark_dirty(project)
 
     def pending_projects(self) -> list[str]:
         with self._lock:

@@ -18,6 +18,7 @@ from .project_row_mapper import ProjectRowMapper
 from .search_filters import normalize_exclusions, should_exclude_result
 from .search_rank import build_embedding_text, tokenize_text
 from .search_scoring import DEFAULT_SEARCH_SCORER
+from .freshness import get_freshness_registry
 from .semantic_agent import SemanticWriteRequest, SemanticWriter, StubSemanticWriter
 from .semantic_chunking import build_method_chunk_spans
 from .semantic_descriptions import build_semantic_description_record
@@ -126,6 +127,31 @@ class QdrantVectorIndex:
         if self.semantic_writer is None:
             self.semantic_writer = StubSemanticWriter()
 
+    def _freshness_key(self, payload: dict[str, Any]) -> str:
+        return str(payload.get("sqlite_uri") or payload.get("project_name") or payload.get("project") or "")
+
+    def _freshness_fields(self, payload: dict[str, Any]) -> dict[str, Any]:
+        registry = get_freshness_registry()
+        snapshot = registry.snapshot(self._freshness_key(payload))
+        return {
+            "freshness_state": snapshot.freshness_state,
+            "source_revision": snapshot.source_revision,
+            "source_hash": snapshot.source_hash,
+            "potentially_inaccurate": snapshot.potentially_inaccurate,
+            "relevant": snapshot.relevant,
+            "dirty_at": snapshot.dirty_at,
+        }
+
+    def _mark_payload_dirty(self, payload: dict[str, Any], *, obsolete: bool = False) -> int:
+        registry = get_freshness_registry()
+        key = self._freshness_key(payload)
+        snapshot = registry.mark_obsolete(key) if obsolete else registry.mark_dirty(key)
+        return snapshot.source_revision
+
+    def _promote_payload_fresh(self, payload: dict[str, Any], *, observed_revision: int) -> None:
+        registry = get_freshness_registry()
+        registry.promote_if_current(self._freshness_key(payload), observed_revision=observed_revision)
+
     @property
     def vector_size(self) -> int:
         assert self.embedding_provider is not None
@@ -162,6 +188,10 @@ class QdrantVectorIndex:
         if description_text:
             fields["description_text"] = description_text
         return fields
+
+    def _semantic_payload_freshness(self, payload: dict[str, Any], *, obsolete: bool = False) -> dict[str, Any]:
+        revision = self._mark_payload_dirty(payload, obsolete=obsolete)
+        return {"freshness_revision": revision, **self._freshness_fields(payload)}
 
     def _chunk_payload(
         self,
@@ -329,6 +359,7 @@ class QdrantVectorIndex:
                 parent_scope_id=parent_scope_id_text,
             )
             payload.update(self._semantic_description_fields(chunk_description))
+            payload.update(self._freshness_fields(payload))
             points.append(
                 qmodels.PointStruct(
                     id=_stable_point_id(payload["sqlite_uri"]),
@@ -596,6 +627,7 @@ class QdrantVectorIndex:
             metadata={"root_type": root_node.type, "language": parsed.language},
         )
         file_payload.update(self._semantic_description_fields(file_description))
+        file_payload.update(self._freshness_fields(file_payload))
         points = [
             qmodels.PointStruct(
                 id=_stable_point_id(file_payload["sqlite_uri"]),
@@ -634,6 +666,7 @@ class QdrantVectorIndex:
                 metadata={"symbol_type": symbol_ordered.get("type", "")},
             )
             payload.update(self._semantic_description_fields(symbol_description))
+            payload.update(self._freshness_fields(payload))
             symbol_embedding_text = build_embedding_text(
                 file_path=file_path,
                 symbol_name=str(symbol_ordered.get("name", "")),
@@ -714,6 +747,7 @@ class QdrantVectorIndex:
             metadata={"root_type": file_record.get("root_type", ""), "language": file_record["language"]},
         )
         file_payload.update(self._semantic_description_fields(file_description))
+        file_payload.update(self._freshness_fields(file_payload))
         file_embedding_text = build_embedding_text(
             file_path=file_path,
             skeleton=f"{str(file_record.get('root_type', ''))}\n{str(file_record.get('skeleton', ''))}",
@@ -755,6 +789,7 @@ class QdrantVectorIndex:
                 metadata={"symbol_type": symbol_ordered.get("type", "")},
             )
             payload.update(self._semantic_description_fields(symbol_description))
+            payload.update(self._freshness_fields(payload))
             symbol_embedding_text = build_embedding_text(
                 file_path=file_path,
                 symbol_name=str(symbol_ordered.get("name", "")),
@@ -799,6 +834,7 @@ class QdrantVectorIndex:
     ) -> dict[str, Any]:
         project_root_text = str(Path(project_root).resolve())
         sqlite_file_uri = factory_sqlite_file_uri(project, file_id)
+        observed_revision = self._mark_payload_dirty({"sqlite_uri": sqlite_file_uri})
         self.delete_file(sqlite_file_uri)
         points = self._build_points_from_analysis(
             project=project,
@@ -811,6 +847,7 @@ class QdrantVectorIndex:
             file_mtime_ns=file_mtime_ns,
         )
         upserted = self._upsert_points(points)
+        self._promote_payload_fresh({"sqlite_uri": sqlite_file_uri}, observed_revision=observed_revision)
         return {
             "synced": True,
             "project": project,
@@ -830,6 +867,7 @@ class QdrantVectorIndex:
     ) -> dict[str, Any]:
         project_root_text = str(Path(project_root).resolve())
         sqlite_file_uri = factory_sqlite_file_uri(project, file_id)
+        observed_revision = self._mark_payload_dirty({"sqlite_uri": sqlite_file_uri})
         self.delete_file(sqlite_file_uri)
         points = self._build_points_from_records(
             project=project,
@@ -839,6 +877,7 @@ class QdrantVectorIndex:
             symbol_rows=symbol_rows,
         )
         upserted = self._upsert_points(points)
+        self._promote_payload_fresh({"sqlite_uri": sqlite_file_uri}, observed_revision=observed_revision)
         return {
             "synced": True,
             "project": project,
@@ -928,6 +967,7 @@ class QdrantVectorIndex:
                 "score": float(getattr(point, "score", 0.0)),
                 **payload,
             }
+            result.update(self._freshness_fields(result))
             result["score"] = DEFAULT_SEARCH_SCORER.score(
                 needle,
                 base_score=float(result["score"]),

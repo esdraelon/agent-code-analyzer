@@ -79,12 +79,12 @@ Use this as the execution checklist for the milestone branch.
 - [x] Move the plan to `docs/complete/` when done
 
 ## Milestone 9 — Global agent rate limiting and semantic freshness lifecycle
-- [ ] Add one service-wide limiter for all agent calls
-- [ ] Normalize provider-specific rate-limit signals in each agent backend
-- [ ] Add dirty / obsolete / fresh state transitions for semantic units
-- [ ] Guard freshness promotion with revision or hash checks
-- [ ] Keep dirty and obsolete records searchable with a stale-warning flag
-- [ ] Add tests for limiter behavior, race handling, and stale-hit surfacing
+- [x] Add one service-wide limiter for all agent calls
+- [x] Normalize provider-specific rate-limit signals in each agent backend
+- [x] Add dirty / obsolete / fresh state transitions for semantic units
+- [x] Guard freshness promotion with revision or hash checks
+- [x] Keep dirty and obsolete records searchable with a stale-warning flag
+- [x] Add tests for limiter behavior, race handling, and stale-hit surfacing
 
 ## Branch exit criteria
 - [ ] All milestone checklist items are complete or intentionally deferred
