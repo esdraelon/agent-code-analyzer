@@ -2,6 +2,12 @@
 
 Use this as the execution checklist for the milestone branch.
 
+## Steering
+- Each milestone gets its own branch.
+- Keep **95% new-line coverage** on the changed milestone scope.
+- Keep **90% total coverage** for the repository.
+- After each milestone, validate MCP with the ORK3 integration snapshot suite (`uv run python scripts/ork3_eval_snapshot.py`).
+
 ## Milestone 0 — Agent abstraction and Hermes adapter POC
 - [x] Agent request/response contract is normalized
 - [x] Wrapper/factory selects the concrete backend
@@ -12,11 +18,11 @@ Use this as the execution checklist for the milestone branch.
 - [x] Tests cover the wrapper and both Hermes modes
 
 ## Milestone 1 — Semantic record model and stable identities
-- [ ] Define the canonical semantic record value object
-- [ ] Confirm scope coverage for package/module/file/class/method/chunk
-- [ ] Define stable identity derivation rules
-- [ ] Separate record construction from storage mapping
-- [ ] Add tests for identity stability and lineage
+- [x] Define the canonical semantic record value object
+- [x] Confirm scope coverage for package/module/file/class/method/chunk
+- [x] Define stable identity derivation rules
+- [x] Separate record construction from storage mapping
+- [x] Add tests for identity stability and lineage
 
 ## Milestone 2 — Semantic writer abstraction with a stub backend
 - [ ] Define the narrow writer interface
