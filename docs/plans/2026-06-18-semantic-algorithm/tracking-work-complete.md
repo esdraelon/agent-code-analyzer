@@ -81,12 +81,19 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 - Notes: Added project-wide rebuild coverage for forced refreshes and bootstrap idempotence; mass ingestion now rebuilds every supported file and preserves stable point identity across repeated runs.
 
 ### Milestone 5 — Incremental fswatch diff refresh pipeline
-- Status: planned
+- Status: complete
 - Pattern: Unit of Work + Command + Event Aggregator
 - Completion evidence to collect:
   - batched file changes collapse correctly
   - add/modify/delete/move are handled explicitly
   - conservative fallback is covered by tests
+
+- Date: 2026-06-20 06:18 CDT
+- Milestone: 5 — Incremental fswatch diff refresh pipeline
+- Branch: feat/semantic-algorithm-m5-piecewise-refresh
+- Commit: 0071b52
+- Verification: `uv run pytest -q tests/test_projects_sqlite.py tests/test_watcher.py tests/test_vector_index.py` (`26 passed`), `uv run pytest -q` (`89 passed`)
+- Notes: Added integration coverage for changed-file refreshes, rename-as-delete-plus-add, unchanged-neighbor stability, and batching/fallback behavior in the watcher.
 
 ### Milestone 6 — MCP surface for semantic refresh operations
 - Status: planned
