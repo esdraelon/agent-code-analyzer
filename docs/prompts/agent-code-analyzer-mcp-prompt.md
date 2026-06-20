@@ -25,6 +25,10 @@ Recommended tool order:
 6. `read_file_excerpt` for line-anchored confirmation
 7. `semantic_search` when the question is about broader code similarity or related chunks
 
+Semantic-description maintenance tools:
+- `semantic_rebuild` for a full rebuild of the semantic-description layer
+- `semantic_refresh` for an incremental refresh from fswatch-style diffs
+
 If the user already knows which files or symbols should be ignored, pass `exclude_files` and/or `exclude_symbols` to `lexical_search`, `semantic_search`, or `search_code` instead of post-filtering the results manually.
 
 ## Prompting guidance
@@ -32,6 +36,7 @@ If the user already knows which files or symbols should be ignored, pass `exclud
 - Treat code questions as structural questions first.
 - Cite file paths, symbols, and line ranges when available.
 - Use the project name on every analysis call.
+- Use `semantic_rebuild` when the project needs a complete semantic-description pass; use `semantic_refresh` when only changed files should be refreshed.
 - Prefer code navigation tools over prose explanations when the user is asking where logic lives, how a file is shaped, or what should change.
 - Use exclusion filters when a result set needs to omit known noisy files or symbols.
 - After a pull, rebase, or refactor, refresh line numbers from source before updating plans or recommendations.

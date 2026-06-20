@@ -96,12 +96,19 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 - Notes: Added integration coverage for changed-file refreshes, rename-as-delete-plus-add, unchanged-neighbor stability, and batching/fallback behavior in the watcher.
 
 ### Milestone 6 — MCP surface for semantic refresh operations
-- Status: planned
+- Status: complete
 - Pattern: Facade + Command
 - Completion evidence to collect:
   - MCP commands exposed
   - legacy retrieval stays intact
   - prompt guidance updated
+
+- Date: 2026-06-20 07:01 CDT
+- Milestone: 6 — MCP surface for semantic refresh operations
+- Branch: feat/semantic-algorithm-m6-mcp-surface
+- Commit: dbfc3fb
+- Verification: `uv run pytest -q tests/test_server_helpers.py tests/test_smoke.py tests/test_projects_sqlite.py` (`18 passed`), `uv run pytest -q` (`91 passed`)
+- Notes: Added explicit semantic rebuild/refresh MCP tools, preserved the legacy ingest/sync paths, and updated the operator prompt to distinguish mass ingestion from fswatch diff refresh.
 
 ### Milestone 7 — Retrieval and quality verification
 - Status: planned

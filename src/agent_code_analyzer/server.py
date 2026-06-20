@@ -29,6 +29,8 @@ SERVER_INSTRUCTIONS = (
     "Any time the user asks you to consider the content of a code base, first check whether that code base is already ingested in agent-code-analyzer. "
     "If it is ingested, use this server's tools to investigate it. If it is not ingested, ask whether it should be onboarded to agent-code-analyzer before proceeding. "
     "Prefer project-scoped tools such as parse_source, generate_ast_skeleton, list_code_symbols, detect_source_language, read_file_excerpt, lexical_search, and search_code before guessing from raw text. "
+    "Use semantic_rebuild for a full semantic-description rebuild and semantic_refresh for an incremental fswatch diff refresh. "
+    "When the caller needs a semantic-description operation, make the mode explicit instead of relying on the generic ingest and sync tool names. "
     "When the user wants to ignore known-noisy code, use the exclusion filters on lexical_search, semantic_search, and search_code to omit file paths and symbol names rather than manually filtering results after the fact. "
     "When the question is about code, inspect the project first and answer with file paths, symbols, and line ranges when available. "
     "All analysis calls are project-scoped."
@@ -84,6 +86,17 @@ class FileExcerptRenderer:
 
 TOOL_RESPONSES = ToolResponseFactory()
 EXCERPT_RENDERER = FileExcerptRenderer()
+
+
+def _semantic_operation_response(operation: str, semantic_mode: str, summary: dict[str, object]) -> dict[str, object]:
+    response = dict(summary)
+    response.update(
+        {
+            "operation": operation,
+            "semantic_mode": semantic_mode,
+        }
+    )
+    return response
 
 
 @mcp.tool()
@@ -174,6 +187,22 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, object
     """Recursively ingest a project's directory into a cached Tree-sitter index."""
     get_project(project)
     return ingest_project_index(project, refresh=refresh)
+
+
+@mcp.tool()
+def semantic_rebuild(project: str) -> dict[str, object]:
+    """Trigger a full semantic-description rebuild using mass ingestion."""
+    get_project(project)
+    summary = ingest_project_index(project, refresh=True)
+    return _semantic_operation_response("semantic_rebuild", "mass_ingestion", summary)
+
+
+@mcp.tool()
+def semantic_refresh(project: str) -> dict[str, object]:
+    """Trigger an incremental semantic-description refresh using fswatch diffs."""
+    get_project(project)
+    summary = sync_project_index(project)
+    return _semantic_operation_response("semantic_refresh", "fswatch_diff", summary)
 
 
 @mcp.tool()
