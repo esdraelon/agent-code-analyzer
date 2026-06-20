@@ -119,6 +119,13 @@ This file is the living progress tracker for the semantic algorithm plan. Update
   - ranking and filtering are project-scoped
   - retrieval quality checks run against `FakeAgent`-backed deterministic baselines first
 
+- Date: 2026-06-20 10:26 CDT
+- Milestone: 7 — Retrieval and quality verification
+- Branch: feat/semantic-algorithm-m6-mcp-surface
+- Commit: 485d59ee4464cce0593157d0544dcfb143fbb87b
+- Verification: `uv run pytest tests/test_vector_index.py tests/test_server_helpers.py tests/test_semantic_agent.py tests/test_agents.py -q` (`27 passed`)
+- Notes: Added retrieval-quality documentation, marked the milestone complete, and recorded the deterministic FakeAgent-first verification pattern.
+
 ### Milestone 8 — Operator guidance and documentation
 - Status: planned
 - Pattern: Runbook / Playbook
