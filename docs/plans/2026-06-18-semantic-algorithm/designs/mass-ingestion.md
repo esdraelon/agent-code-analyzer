@@ -1,38 +1,95 @@
-# Design: Full-Project Mass Ingestion
+# Design: Milestone 4 — Full-Project Mass Ingestion for All Semantic Levels
 
 ## Purpose
 
-Rebuild the semantic layer from scratch when the project needs a clean refresh.
+Rebuild the complete semantic-description layer in one pass when the project needs a clean refresh.
 
-## How it works
+## Requirements covered
 
-The ingestion coordinator runs a fixed sequence:
+- project-wide traversal
+- every semantic level
+- description generation for each scope
+- write descriptions and embeddings
+- idempotent rebuilds
+- stable identities across repeat runs
 
-1. discover project scopes
-2. build the context for each scope
-3. call the semantic writer
-4. map the result to storage payloads
-5. persist the new records
+## Current codebase evidence
 
-The pipeline should be idempotent: rerunning it against the same source tree should not create duplicates.
+The current project ingestion path is already a working template:
 
-## How it is used
+- `projects.py` owns `_upsert_file_analysis(...)`, `ingest_project_tree(...)`, and `sync_project_tree(...)` (`projects.py:147-240`, `283-290`)
+- `vector_index.py` owns `sync_analysis(...)`, `sync_records(...)`, `bootstrap_project(...)`, and `bootstrap_all_projects(...)` (`vector_index.py:493-682`)
+- `server.py` already exposes `ingest_project_tree(...)` as the user-facing MCP command (`server.py:152-169`)
 
-- Cold start rebuilds
-- Manual repair after a major refactor
-- Baseline refresh before enabling incremental updates
+That means the new semantic rebuild can follow the same orchestration shape: build source facts first, then map them into search records.
 
 ## Design pattern
 
 **Template Method + Coordinator**
 
 Why it fits:
-- the overall sequence is fixed
-- each step can be specialized or mocked
-- orchestration is clearer when the pipeline is explicit
+
+- the ingestion sequence is fixed
+- each stage can be specialized independently
+- orchestration remains obvious and testable
+
+## Design details
+
+### 1. Pipeline stages
+
+The rebuild should run in a fixed order:
+
+1. discover project files and source metadata
+2. derive semantic scopes from Tree-sitter
+3. build semantic requests for each scope
+4. call the writer
+5. map description output into record payloads
+6. persist sqlite metadata and vector points
+
+### 2. Idempotency rules
+
+The rebuild must be safe to rerun on the same tree:
+
+- stable scope identities
+- upsert-by-identity semantics
+- deletion of stale records when a scope disappears
+- no duplicate vector points for the same stable record
+
+### 3. Scope ordering
+
+Generate descriptions from high to low level so lower-level summaries can inherit structure from parent scopes when needed:
+
+- package
+- module
+- file
+- class
+- method
+- chunk
+
+### 4. Relationship to current code
+
+The current file/symbol persistence logic can be reused as the foundation for the semantic rebuild.
+The semantic rebuild should not replace `ingest_project_tree`; it should become the next layer that can be invoked after the source tree is synced.
+
+## Proposed file responsibilities
+
+- `src/agent_code_analyzer/projects.py`
+  - source discovery
+  - refresh coordination
+  - source metadata retrieval
+- `src/agent_code_analyzer/vector_index.py`
+  - point construction and upsert/delete helpers
+  - semantic record sync
+- `src/agent_code_analyzer/server.py`
+  - command surface for rebuild triggers
+- `tests/test_vector_index.py`
+  - record upsert and idempotency
+- `tests/test_server_helpers.py`
+  - orchestration / command surface coverage
 
 ## Verification targets
 
-- A whole-project rebuild produces the full semantic record set.
-- Re-running the rebuild remains safe.
-- The coordinator remains thin enough to test step-by-step.
+- a whole-project rebuild produces the full semantic record set
+- rerunning the rebuild does not duplicate records
+- the coordinator stays thin and testable
+- the pipeline remains compatible with the existing file/symbol ingestion path

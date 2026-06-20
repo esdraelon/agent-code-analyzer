@@ -1,33 +1,83 @@
-# Design: Retrieval and Quality Verification
+# Design: Milestone 7 — Retrieval and Quality Checks for Semantic Descriptions
 
 ## Purpose
 
-Make the new semantic descriptions searchable and prove that they answer the right kind of questions.
+Make the semantic descriptions searchable and verify that the level-specific summaries answer the right kind of question.
 
-## How it works
+## Requirements covered
 
-Retrieval should treat semantic descriptions as a project-scoped search index over natural-language summaries. Queries that ask about architecture should prefer higher-level scopes; queries about behavior or algorithms should prefer class, method, or chunk scopes.
+- fuzzy semantic intent first
+- lexical fallback second
+- architecture queries prefer high-level scopes
+- behavior queries prefer lower-level scopes
+- project scoping preserved
+- quality checks for retrieval usefulness
+- both rebuild and incremental paths remain searchable
 
-Quality checks should verify that the scope type shown in the result matches the query intent.
+## Current codebase evidence
 
-## How it is used
+The current retrieval stack already exposes the right hooks in `src/agent_code_analyzer/vector_index.py` and `src/agent_code_analyzer/server.py`:
 
-- Search for “what owns X?” and get package/module/file summaries.
-- Search for “how does Y work?” and get method/chunk summaries.
-- Use verification tests to ensure the rankings stay sensible as the branch evolves.
+- `semantic_search(...)` is the semantic search entry point (`server.py:112-129`)
+- `lexical_search(...)` is the token/identifier entry point (`server.py:132-149`)
+- `search_code(...)` merges the two result sets (`server.py:152-169`)
+- `QdrantVectorIndex.search(...)` owns the actual vector query and result filtering (`vector_index.py:585-666`)
+
+The code already proves that search is layered; the milestone adds level-aware retrieval policy and quality validation on top of that structure.
 
 ## Design pattern
 
 **Specification + Strategy**
 
 Why it fits:
-- the query filter rules should be explicit and testable
-- the ranking policy may change as signal quality improves
-- the result shape should remain consistent even if the score policy changes
+
+- Specification defines what counts as a useful semantic hit for each scope level
+- Strategy lets the retrieval policy choose ranking behavior by query intent
+
+## Design details
+
+### 1. Query routing
+
+Retrieval should route by question type:
+
+- architecture / ownership questions -> package/module/file summaries
+- behavior / algorithm questions -> class/method/chunk summaries
+- exact token lookup -> lexical fallback or merged search
+
+### 2. Scope-aware ranking
+
+Add result-shaping rules so the ranking can prefer the right granularity instead of treating all records as equal:
+
+- file/module/package records should surface intent and dependency context
+- class/method/chunk records should surface behavior and control flow
+- scope type should be carried through the payload and result envelope
+
+### 3. Quality harness
+
+Use a repeatable query set and compare outputs against expectations for:
+
+- scope level
+- anchor usefulness
+- project scoping
+- latency
+- noise level
+
+## Proposed file responsibilities
+
+- `src/agent_code_analyzer/vector_index.py`
+  - result ranking and filtering
+  - scope-aware payload selection
+- `src/agent_code_analyzer/projects.py`
+  - source metadata needed for validation snapshots
+- `tests/test_vector_index.py`
+  - ranking / retrieval cases
+- `tests/test_server_helpers.py`
+  - query-shape and envelope cases
 
 ## Verification targets
 
-- Architecture queries return high-level summaries.
-- Algorithm queries return detailed scopes.
-- Project boundaries are respected.
-- The stub writer path remains valid while the real backend is still pending.
+- architecture queries hit high-level summaries
+- algorithm queries hit lower-level summaries
+- project scoping remains correct
+- the stub path remains acceptable during early development
+- both ingestion modes remain searchable

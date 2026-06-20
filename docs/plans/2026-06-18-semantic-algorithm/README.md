@@ -1,28 +1,29 @@
 # Semantic Algorithm Plan Folder
 
-This folder contains the working plan, tracking ledger, and per-feature design notes for the semantic algorithm / architecture-description branch.
+This folder contains the low-level requirements, milestone-specific designs, and living tracking ledger for the semantic description extension of `agent-code-analyzer`.
 
 ## Document map
 
-- `requirements.md` — low-level milestone-by-milestone requirements doc
-- `implementation-plan.md` — original milestone plan and implementation order
+- `requirements.md` — milestone-by-milestone requirements
+- `checklist.md` — implementation checklist for the branch
+- `designs/agent-abstraction.md` — milestone 0 design: agent abstraction and Hermes adapter POC
+- `designs/agent-evaluation.md` — milestone 0 supporting note: fake-agent evaluation strategy
+- `designs/record-model.md` — milestone 1 design: semantic record model and stable identities
+- `designs/semantic-writer.md` — milestone 2 design: semantic writer abstraction and stub backend
+- `designs/chunking.md` — milestone 3 design: Tree-sitter-aware chunking and scope partitioning
+- `designs/mass-ingestion.md` — milestone 4 design: full-project mass ingestion
+- `designs/fswatch-diff-updates.md` — milestone 5 design: incremental fswatch diff refresh
+- `designs/mcp-surface.md` — milestone 6 design: MCP surface for semantic indexing
+- `designs/retrieval-and-quality.md` — milestone 7 design: retrieval and quality checks
+- `designs/operator-guidance.md` — milestone 8 design: documentation and operator guidance
+- `implementation-plan.md` — original milestone plan and pattern summary
 - `tracking-work-complete.md` — living progress ledger and completion evidence
-- `designs/record-model.md` — record schema and identity design
-- `designs/agent-abstraction.md` — general agent abstraction, Hermes shell/lib adapters, and fake strategy
-- `designs/semantic-writer.md` — writer abstraction, stub, and backend swap design
-- `designs/chunking.md` — Tree-sitter chunking and scope partition design
-- `designs/mass-ingestion.md` — full rebuild pipeline design
-- `designs/fswatch-diff-updates.md` — incremental diff-update pipeline design
-- `designs/mcp-surface.md` — server / MCP command surface design
-- `designs/retrieval-and-quality.md` — retrieval, ranking, and validation design
-- `designs/operator-guidance.md` — operator usage and prompt guidance
-- `designs/agent-evaluation.md` — fake-vs-real agent strategy for plan-building evaluation
 
 ## Reading order
 
 1. Read `requirements.md` for the milestone-by-milestone requirements.
-2. Use `implementation-plan.md` only if you need the original implementation ordering and pattern summary.
-3. Use the matching design doc for the feature you are changing.
+2. Use the matching design doc for the milestone you are changing.
+3. Use `implementation-plan.md` only if you need the original sequence and roadmap narrative.
 4. Update `tracking-work-complete.md` as work lands.
 
 ## Source of truth

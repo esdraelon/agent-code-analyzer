@@ -1,42 +1,53 @@
-# Design: Agent Evaluation Strategy
+# Design: Milestone 0 Supporting Note — Agent Evaluation Strategy
 
 ## Purpose
 
-Provide a strategy-pattern wrapper for agent calls so the evaluation workflow can use a fake agent now and real agents later.
+Record the fake-vs-real evaluation pattern used by the agent abstraction POC so the semantic-description branch can stay deterministic during plumbing work.
 
-## How it works
+## Current codebase evidence
 
-The caller uses a stable agent strategy interface. The strategy registry is described as having at least two entries:
+The evaluation strategy is already implemented in `src/agent_code_analyzer/agents/fake.py` and verified in `tests/test_agents.py`.
 
-- `fake` — documented for the evaluation workflow
-- `real` — reserved for future backends
+- `FakeAgent` returns `No detail here`
+- it logs request records to JSONL when a log directory is configured
+- it preserves structural placeholder output for structured requests
 
-The fake strategy does three things on every request:
-
-1. parses the prompt enough to determine the response shape
-2. logs the request and parsed response metadata to disk
-3. returns a valid placeholder response that always contains `No detail here`
-
-When the prompt expects structured output, the fake strategy mirrors that shape with placeholder values so downstream validation can keep running.
-
-## How it is used
-
-- Build and review the semantic plan without spending model tokens.
-- Exercise request logging and prompt-shape handling before the real agent exists.
-- Keep the evaluation path deterministic for tests.
+The agent factory in `src/agent_code_analyzer/agents/base.py` already makes the fake backend the simplest backend to swap into a future semantic writer.
 
 ## Design pattern
 
 **Strategy + Null Object + Adapter**
 
 Why it fits:
-- Strategy lets the caller swap between fake and real agents
-- Null Object gives the fake agent a harmless default behavior
-- Adapter keeps the logging / feedback hook separate from future provider details
+
+- Strategy allows a fake backend today and a real backend later
+- Null Object keeps the evaluation path deterministic
+- Adapter isolates logging and feedback handling from provider details
+
+## Design details
+
+### 1. Fake backend behavior
+
+The fake backend should continue to:
+
+- parse the prompt shape enough to keep output valid
+- log every request deterministically
+- return a placeholder response that is easy to assert in tests
+
+### 2. Why this exists
+
+The semantic-description branch needs a transport-independent proof-of-life path before a model-backed writer is introduced.
+
+### 3. Relationship to milestone 0
+
+This note is intentionally narrower than `agent-abstraction.md`:
+
+- `agent-abstraction.md` explains the caller boundary and Hermes adapters
+- this file explains why the fake backend exists and how to keep it deterministic
 
 ## Verification targets
 
-- The fake strategy logs requests to disk.
-- The fake strategy always emits `No detail here` as the feedback text.
-- Structured prompts receive structurally valid placeholder output.
-- The real strategy entry exists but remains unimplemented.
+- the fake backend logs requests to disk
+- the fake backend always emits `No detail here`
+- structured prompts still receive structurally valid placeholders
+- the fake strategy remains usable until a real backend is plugged in

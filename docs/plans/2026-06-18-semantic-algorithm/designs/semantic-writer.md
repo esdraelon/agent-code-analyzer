@@ -1,38 +1,98 @@
-# Design: Semantic Writer Abstraction
+# Design: Milestone 2 — Semantic Writer Abstraction with a Stub Backend
 
 ## Purpose
 
-Provide a narrow interface that turns source scopes into plain-language semantic descriptions.
+Add the narrow semantic-description writer boundary that can later be backed by a real model, while keeping the indexing pipeline testable with a deliberate no-response sentinel.
 
-## How it works
+## Requirements covered
 
-The caller passes the source slice, the AST outline, the line anchors, and a small instruction contract. The writer returns either:
+- narrow writer interface
+- deliberate no-response sentinel
+- transport/runtime failure distinction
+- stub backend for early plumbing
+- swap-ready boundary for future model-backed backends
 
-- a description text payload
-- a deliberate no-response sentinel
-- a transport/runtime failure
+## Current codebase evidence
 
-The stub backend deliberately emits the sentinel so the rest of the system can be tested without a model dependency.
+The agent abstraction already exists in `src/agent_code_analyzer/agents/`:
 
-For the agent-evaluation workflow, the fake agent strategy logs every request to disk, parses the prompt shape enough to keep the response structurally valid, and always returns the feedback text `No detail here`.
+- `AgentCaller.call(...)` is the current normalized entry point (`agents/base.py`)
+- `FakeAgent` already proves the traceable placeholder pattern (`agents/fake.py`)
+- `HermesShellAgent` and `HermesLibAgent` already provide transport-specific adapters (`agents/hermes.py`)
 
-## How it is used
-
-- Mass ingestion calls the writer for every scope.
-- Diff refresh calls the writer only for the impacted scopes.
-- Tests can inject the stub writer and assert the plumbing still works.
+That means the semantic writer can be built as a small layer above the agent abstraction rather than as a separate transport system.
 
 ## Design pattern
 
 **Strategy + Null Object + Adapter**
 
 Why it fits:
-- Strategy keeps the backend swappable
-- Null Object represents the intentional no-op path
-- Adapter isolates whatever future model API gets chosen
+
+- Strategy keeps the writer backend swappable.
+- Null Object represents an intentional "no generated response yet" state.
+- Adapter isolates whichever concrete agent or provider is chosen later.
+
+## Design details
+
+### 1. Writer contract
+
+The writer should accept a semantic unit request with enough context to explain the code:
+
+- source slice
+- Tree-sitter outline / AST skeleton
+- file path
+- symbol path
+- line anchors
+- lineage metadata
+- output contract / verbosity hints
+
+The writer should return one of three outcomes:
+
+- description text
+- deliberate sentinel/no-op response
+- transport/runtime failure
+
+### 2. Stub backend
+
+The initial backend should be a stub that always returns the sentinel path.
+
+Recommended sentinel semantics:
+
+- explicit no-response marker, not `None`
+- easy to test
+- distinguishable from exceptions
+- safe to pass through indexing code
+
+The stub backend should reuse the same request shape as the future real backend, so the caller never has to change when the writer becomes real.
+
+### 3. Integration with agent abstraction
+
+The writer should call the agent wrapper rather than depending on raw Hermes details directly. That allows the same request shape to be exercised by:
+
+- the deterministic fake backend
+- the Hermes shell backend
+- the Hermes library backend
+
+### 4. Relationship to future semantic extraction
+
+The writer is not the schema. It produces description text only. The record layer owns persistence and metadata validation.
+
+## Proposed file responsibilities
+
+- `src/agent_code_analyzer/semantic_agent.py` if created
+  - semantic writer interface
+  - sentinel type / helper
+  - adapter to the agent abstraction
+- `src/agent_code_analyzer/vector_index.py`
+  - call sites that request semantic descriptions
+- `tests/test_semantic_agent.py` if created
+  - sentinel path
+  - failure path
+  - wrapper contract
 
 ## Verification targets
 
-- The caller can distinguish no-response from failure.
-- The interface remains stable across backend swaps.
-- The stub path keeps the indexing code testable from day one.
+- the caller can distinguish no-response from failure
+- the writer boundary stays narrow and swappable
+- the stub path keeps indexing testable without a model dependency
+- existing agent backends can be plugged in later with minimal caller change

@@ -1,46 +1,116 @@
-# Design: Agent Abstraction and Hermes Adapters
+# Design: Milestone 0 — Agent Abstraction and Hermes Adapter POC
 
 ## Purpose
 
-Provide a layered agent interface that can evaluate semantic descriptions through multiple backends without the caller caring which concrete agent is used.
+Provide the normalized agent boundary used by the semantic-description branch and prove that the caller can swap between a fake backend, Hermes shell execution, and Hermes in-process execution without changing the call site.
 
-## Layers
+## Requirements covered
 
-1. **General agent abstraction**
-   - A single `Agent` call surface for callers and wrappers.
-   - Normalized request and response objects.
+- normalized request and response objects
+- a single wrapper/factory for agent selection
+- fake, Hermes shell, and Hermes lib backends
+- traceable JSONL request logs
+- a stable boundary suitable for the semantic-evaluation path
 
-2. **Lower-level Hermes abstraction**
-   - Shared Hermes-specific prompt preparation and response normalization.
-   - Common configuration for shell and library execution.
+## Current codebase evidence
 
-3. **Hermes shell adapter**
-   - Calls `hermes chat` as a subprocess.
-   - Best for a simple integration boundary and easy operational inspection.
+The POC already exists in `src/agent_code_analyzer/agents/`:
 
-4. **Hermes library adapter**
-   - Imports Hermes Python code directly and calls the agent runtime in-process.
-   - Best for tighter coupling and lower per-call overhead.
+- `base.py` defines `AgentRequest`, `AgentResponse`, `AgentCaller`, and `build_agent`
+- `fake.py` defines `FakeAgent`
+- `hermes.py` defines `HermesShellAgent` and `HermesLibAgent`
+- `tests/test_agents.py` covers the wrapper and both Hermes execution modes
 
-## Concrete implementations
+The current implementation already follows the desired split:
 
-- `FakeAgent`
-- `HermesShellAgent`
-- `HermesLibAgent`
+- `AgentCaller.call(...)` is the stable caller-facing API
+- `build_agent(kind, **kwargs)` is the concrete strategy factory
+- `FakeAgent` writes request logs and returns the deterministic placeholder `No detail here`
+- `HermesShellAgent` shells out with `hermes chat`
+- `HermesLibAgent` imports `run_agent.AIAgent` in-process
 
-## Proof-of-concept wrapper
+## Design pattern
 
-Use a small calling wrapper that accepts a backend name, builds the agent, and invokes it through the same normalized request shape.
+**Strategy + Facade + Adapter + Null Object**
 
-## Evaluation flow
+Why it fits:
 
-- `agent-code-analyzer` prepares a semantic evaluation prompt.
-- The wrapper selects the backend.
-- The backend returns a normalized response.
-- The caller stores the raw response and metadata for traceability.
+- Strategy lets the caller choose a backend without branching on transport details.
+- Facade keeps the caller-facing API tiny (`AgentCaller.call`).
+- Adapter isolates Hermes-specific execution details from the caller.
+- Null Object keeps the fake backend deterministic and safe for tests.
+
+## Design details
+
+### 1. General agent contract
+
+The shared contract should remain the only thing the semantic pipeline depends on:
+
+- prompt text
+- optional system prompt
+- request metadata
+- requested response format
+- normalized response content
+- raw backend output
+- parsed output
+- backend identity
+
+That contract is already embodied by `AgentRequest` and `AgentResponse` in `base.py`.
+
+### 2. Hermes abstraction layer
+
+The Hermes-facing boundary should remain lower-level than the semantic pipeline. It should own:
+
+- CLI invocation details
+- in-process Hermes imports
+- model/provider configuration
+- response normalization
+- backends’ trace metadata
+
+The current split in `hermes.py` is a good basis:
+
+- `HermesShellAgent` owns subprocess execution
+- `HermesLibAgent` owns import-path management and direct `AIAgent` calls
+
+### 3. Fake backend
+
+The fake backend should continue to behave as a deterministic sentinel provider:
+
+- emit `No detail here`
+- preserve request metadata in logs
+- optionally emit structured placeholder payloads when a structured format is requested
+- never require a network or model dependency
+
+The current `FakeAgent` already logs JSONL request records and returns the placeholder response.
+
+### 4. Wrapper / factory
+
+The wrapper should remain the public boundary used by future semantic-description code. It should make agent selection explicit and keep the caller insulated from backend-specific kwargs.
+
+The current `build_agent()` factory is the right place for backend selection, while `AgentCaller` stays the caller-friendly facade.
+
+## Proposed file responsibilities
+
+- `src/agent_code_analyzer/agents/base.py`
+  - request / response dataclasses
+  - agent protocol
+  - caller wrapper
+  - factory
+- `src/agent_code_analyzer/agents/fake.py`
+  - deterministic fake backend
+  - JSONL request logging
+- `src/agent_code_analyzer/agents/hermes.py`
+  - Hermes CLI adapter
+  - Hermes in-process adapter
+- `tests/test_agents.py`
+  - wrapper contract
+  - shell command shape
+  - in-process Hermes import path
+  - fake placeholder behavior
 
 ## Verification targets
 
-- Callers can swap backends without changing the request shape.
-- The shell and library Hermes adapters both satisfy the same interface.
-- The fake backend remains deterministic for offline and test runs.
+- callers can invoke all three backends through one wrapper
+- the fake backend remains deterministic and traceable
+- the shell and library adapters satisfy the same response contract
+- the wrapper can be reused by later semantic-description milestones without caller rewrites
