@@ -1,36 +1,78 @@
-# Design: Operator Guidance and Documentation
+# Design: Milestone 8 — Documentation and Operator Guidance
 
 ## Purpose
 
-Explain how the semantic algorithm layer works, how it is refreshed, and how it is queried.
+Explain how the semantic-description workflow works so the next developer or operator can use it without reconstructing the architecture from code.
 
-## How it works
+## Requirements covered
 
-This is a runbook, not an algorithm. The documentation should describe the lifecycle in the same order the branch lives through it:
+- define semantic descriptions
+- explain the stub agent behavior
+- explain when to use mass ingestion
+- explain when to use fswatch diff refresh
+- explain how chunking changes method-level summaries
+- explain scope-level differences
+- keep docs aligned with behavior
 
-- build the semantic record model
-- generate descriptions
-- refresh incrementally on file changes
-- query the descriptions through MCP
-- verify the results
+## Current codebase evidence
 
-## How it is used
+The current repo already has a split between behavior and guidance:
 
-- New implementers can follow the folder without reading the whole codebase.
-- Operators can decide when to run a full rebuild.
-- Reviewers can compare the docs to the shipped behavior.
+- `docs/plans/2026-06-18-semantic-algorithm-plan.md` captures the roadmap summary
+- `docs/plans/2026-06-18-semantic-algorithm/requirements.md` captures the low-level requirements
+- `docs/plans/2026-06-18-semantic-algorithm/tracking-work-complete.md` captures live status
+- `docs/plans/2026-06-18-semantic-algorithm/designs/*.md` captures per-milestone design intent
+- `docs/prompts/agent-code-analyzer-mcp-prompt.md` is the operator-facing prompt surface referenced by the MCP tools
 
 ## Design pattern
 
-**Runbook / Playbook**
+**Runbook + Playbook**
 
 Why it fits:
-- documentation should guide action, not merely describe it
-- a playbook keeps lifecycle order explicit
-- it provides a stable operator contract for the branch
+
+- guidance should read like an operator checklist
+- mode selection should be explicit and repeatable
+- the document should explain what to do, when to do it, and what success looks like
+
+## Design details
+
+### 1. Guidance scope
+
+The guidance doc should explain:
+
+- what the semantic-description layer is
+- how it differs from raw source chunks
+- how the fake / stub / real backends differ
+- when to run rebuild vs diff refresh
+- how retrieval scope should be chosen
+
+### 2. User-facing mode selection
+
+Give plain rules, not architecture jargon:
+
+- use rebuild when the tree was reindexed, repaired, or heavily refactored
+- use diff refresh when changes are local and incremental
+- use search when the question is exploratory or exact
+
+### 3. Document hygiene
+
+Keep the docs synchronized with the implementation state:
+
+- update the guide when the server surface changes
+- update examples when the writer contract changes
+- move the plan to `docs/complete/` only when the branch is truly done
+
+## Proposed file responsibilities
+
+- `docs/prompts/agent-code-analyzer-mcp-prompt.md`
+  - operational usage notes
+- `docs/plans/2026-06-18-semantic-algorithm/designs/operator-guidance.md`
+  - semantic-description runbook
+- `docs/plans/2026-06-18-semantic-algorithm/tracking-work-complete.md`
+  - live milestone state
 
 ## Verification targets
 
-- The docs match the actual implementation.
-- The lifecycle order is obvious.
-- The folder can serve as a handoff artifact for future work.
+- the docs describe both operating modes clearly
+- the docs match the shipped behavior
+- a new developer can understand the workflow from the docs alone
