@@ -12,6 +12,8 @@ def test_server_instructions_promote_code_first_workflows() -> None:
     assert "generate_ast_skeleton" in instructions
     assert "list_code_symbols" in instructions
     assert "read_file_excerpt" in instructions
+    assert "semantic_rebuild" in instructions
+    assert "semantic_refresh" in instructions
     assert "project-scoped" in instructions
     assert "onboarded to agent-code-analyzer" in instructions
 
@@ -115,6 +117,62 @@ def test_search_code_tool_delegates_to_project_search(monkeypatch) -> None:
     ]
     assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
 
+
+class FakeProjectLookup:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, project: str) -> dict[str, object]:
+        self.calls.append(project)
+        return {"name": project}
+
+
+class FakeSemanticRebuild:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, project: str, refresh: bool = False) -> dict[str, object]:
+        self.calls.append({"project": project, "refresh": refresh})
+        return {"project": project, "indexed_at": "2026-06-20T06:30:00"}
+
+
+class FakeSemanticRefresh:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, project: str) -> dict[str, object]:
+        self.calls.append(project)
+        return {"project": project, "changed_file_count": 2, "deleted_file_count": 1}
+
+
+def test_semantic_rebuild_tool_exposes_mass_ingestion_mode(monkeypatch) -> None:
+    fake_get_project = FakeProjectLookup()
+    fake_ingest = FakeSemanticRebuild()
+    monkeypatch.setattr(server, "get_project", fake_get_project)
+    monkeypatch.setattr(server, "ingest_project_index", fake_ingest)
+
+    result = server.semantic_rebuild("demo")
+
+    assert fake_get_project.calls == ["demo"]
+    assert fake_ingest.calls == [{"project": "demo", "refresh": True}]
+    assert result["operation"] == "semantic_rebuild"
+    assert result["semantic_mode"] == "mass_ingestion"
+    assert result["project"] == "demo"
+
+
+def test_semantic_refresh_tool_exposes_fswatch_mode(monkeypatch) -> None:
+    fake_get_project = FakeProjectLookup()
+    fake_sync = FakeSemanticRefresh()
+    monkeypatch.setattr(server, "get_project", fake_get_project)
+    monkeypatch.setattr(server, "sync_project_index", fake_sync)
+
+    result = server.semantic_refresh("demo")
+
+    assert fake_get_project.calls == ["demo"]
+    assert fake_sync.calls == ["demo"]
+    assert result["operation"] == "semantic_refresh"
+    assert result["semantic_mode"] == "fswatch_diff"
+    assert result["changed_file_count"] == 2
 
 
 def test_file_excerpt_renderer_clamps_and_handles_reversed_bounds(tmp_path: Path) -> None:
