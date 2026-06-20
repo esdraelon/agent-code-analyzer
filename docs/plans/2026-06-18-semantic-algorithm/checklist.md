@@ -3,6 +3,7 @@
 Use this as the execution checklist for the milestone branch.
 
 ## Steering
+- Pull from `origin` and branch from `main` after each remote merge.
 - Each milestone gets its own branch.
 - Keep **95% new-line coverage** on the changed milestone scope.
 - Keep **90% total coverage** for the repository.
@@ -25,11 +26,11 @@ Use this as the execution checklist for the milestone branch.
 - [x] Add tests for identity stability and lineage
 
 ## Milestone 2 — Semantic writer abstraction with a stub backend
-- [ ] Define the narrow writer interface
-- [ ] Implement the deliberate no-response sentinel
-- [ ] Distinguish sentinel output from transport/runtime failure
-- [ ] Wire the stub backend into the indexing path
-- [ ] Add tests for the stub path and failure path
+- [x] Define the narrow writer interface
+- [x] Implement the deliberate no-response sentinel
+- [x] Distinguish sentinel output from transport/runtime failure
+- [x] Wire the stub backend into the indexing path
+- [x] Add tests for the stub path and failure path
 
 ## Milestone 3 — Tree-sitter-aware chunking and scope partitioning
 - [ ] Add AST-aware chunk boundary logic
