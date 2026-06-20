@@ -7,6 +7,7 @@ from agent_code_analyzer.parsing import analyze_file
 from agent_code_analyzer.projects import add_project
 from agent_code_analyzer import projects as projects_module
 from agent_code_analyzer.vector_index import QdrantVectorIndex
+from agent_code_analyzer.freshness import get_freshness_registry
 
 
 class FakeQdrantClient:
@@ -413,3 +414,36 @@ def test_qdrant_index_uses_injected_embedding_provider_for_vectors_and_dimension
     assert points[0].vector == [1.0, 2.0, 3.0]
     assert points[0].payload["sqlite_uri"] == "sqlite://projects/demo/files/1"
 
+
+
+def test_semantic_search_overlays_current_freshness_state(monkeypatch) -> None:
+    fake_client = FakeQdrantClient()
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
+
+    class FakePoint:
+        def __init__(self, score, payload):
+            self.score = score
+            self.payload = payload
+
+    class FakeQueryResponse:
+        def __init__(self, points):
+            self.points = points
+
+    monkeypatch.setattr(fake_client, "query_points", lambda **kwargs: FakeQueryResponse([FakePoint(0.91, {
+        "project_name": "demo",
+        "sqlite_uri": "sqlite://projects/demo/files/1",
+        "scope_type": "symbol",
+        "symbol_name": "hello",
+        "content_text": "hello world",
+        "chunk_text": "hello world",
+        "signature": "hello world",
+    })]))
+
+    registry = get_freshness_registry()
+    registry.mark_dirty("sqlite://projects/demo/files/1")
+
+    result = index.search("hello", project="demo")
+    hit = result["results"][0]
+    assert hit["freshness_state"] == "dirty"
+    assert hit["potentially_inaccurate"] is True

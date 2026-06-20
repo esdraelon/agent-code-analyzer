@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Iterator
 
+from ..rate_limit import RateLimitError
 from .base import AgentKind, AgentRequest, AgentResponse, BaseAgent
+from ..rate_limit import normalized_rate_limit_signal
 
 
 @contextmanager
@@ -70,27 +72,31 @@ class HermesShellAgent(BaseAgent):
         return command
 
     def complete(self, request: AgentRequest) -> AgentResponse:
-        command = self._build_command(request)
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"Hermes shell agent failed with exit code {completed.returncode}: {completed.stderr.strip()}"
+        with self._rate_limit_context():
+            command = self._build_command(request)
+            completed = subprocess.run(command, capture_output=True, text=True, check=False)
+            if completed.returncode != 0:
+                signal = normalized_rate_limit_signal(RuntimeError(completed.stderr.strip()), backend="shell")
+                if signal is not None:
+                    raise RateLimitError(signal)
+                raise RuntimeError(
+                    f"Hermes shell agent failed with exit code {completed.returncode}: {completed.stderr.strip()}"
+                )
+            content = completed.stdout.strip()
+            response = AgentResponse(
+                content=content,
+                agent_kind="hermes-shell",
+                raw_output=completed.stdout,
+                parsed=content,
+                metadata=self._normalized_metadata(
+                    request,
+                    command=command,
+                    returncode=completed.returncode,
+                    backend="shell",
+                ),
             )
-        content = completed.stdout.strip()
-        response = AgentResponse(
-            content=content,
-            agent_kind="hermes-shell",
-            raw_output=completed.stdout,
-            parsed=content,
-            metadata=self._normalized_metadata(
-                request,
-                command=command,
-                returncode=completed.returncode,
-                backend="shell",
-            ),
-        )
-        self._write_jsonl(self._request_record(request, backend="shell", response=content))
-        return response
+            self._write_jsonl(self._request_record(request, backend="shell", response=content))
+            return response
 
 
 @dataclass(slots=True)
@@ -143,25 +149,32 @@ class HermesLibAgent(BaseAgent):
         return kwargs
 
     def complete(self, request: AgentRequest) -> AgentResponse:
-        run_agent = self._load_run_agent()
-        hermes_agent = run_agent.AIAgent(**self._build_agent_kwargs())
-        content = hermes_agent.chat(request.prompt)
-        if isinstance(content, dict):
-            content_text = json.dumps(content, ensure_ascii=False)
-            parsed: Any = content
-        else:
-            content_text = str(content)
-            parsed = content_text
-        response = AgentResponse(
-            content=content_text,
-            agent_kind="hermes-lib",
-            raw_output=content_text,
-            parsed=parsed,
-            metadata=self._normalized_metadata(
-                request,
-                backend="library",
-                hermes_repo_root=str(self.hermes_repo_root) if self.hermes_repo_root else None,
-            ),
-        )
-        self._write_jsonl(self._request_record(request, backend="library", response=content_text))
-        return response
+        with self._rate_limit_context():
+            run_agent = self._load_run_agent()
+            hermes_agent = run_agent.AIAgent(**self._build_agent_kwargs())
+            try:
+                content = hermes_agent.chat(request.prompt)
+            except Exception as exc:
+                signal = normalized_rate_limit_signal(exc, backend="library")
+                if signal is not None:
+                    raise RateLimitError(signal) from exc
+                raise
+            if isinstance(content, dict):
+                content_text = json.dumps(content, ensure_ascii=False)
+                parsed: Any = content
+            else:
+                content_text = str(content)
+                parsed = content_text
+            response = AgentResponse(
+                content=content_text,
+                agent_kind="hermes-lib",
+                raw_output=content_text,
+                parsed=parsed,
+                metadata=self._normalized_metadata(
+                    request,
+                    backend="library",
+                    hermes_repo_root=str(self.hermes_repo_root) if self.hermes_repo_root else None,
+                ),
+            )
+            self._write_jsonl(self._request_record(request, backend="library", response=content_text))
+            return response

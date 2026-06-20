@@ -11,7 +11,7 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 
 ## Current branch context
 
-- Branch: `feat/semantic-algorithm-m4-mass-ingestion`
+- Branch: `feat/semantic-algorithm-m9-freshness-rate-limit`
 - Plan folder: `docs/plans/2026-06-18-semantic-algorithm/`
 - Source plan summary: `docs/plans/2026-06-18-semantic-algorithm-plan.md`
 
@@ -133,6 +133,15 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 - Branch: feat/semantic-algorithm-m8-operator-guidance
 - Verification: `git diff --check`; `uv run pytest -q` (`91 passed`)
 - Notes: Expanded the operator prompt, added the milestone 8 runbook language, and wrote a completion handoff in `docs/complete/`.
+
+### Milestone 9 — Global agent rate limiting and semantic freshness lifecycle
+- Status: complete
+- Pattern: Guard + Compare-and-Swap + Registry
+- Date: 2026-06-20
+- Branch: feat/semantic-algorithm-m9-freshness-rate-limit
+- Commit: 938bddf1b2f1c6ed03ff27dcee78877301bf90cd
+- Verification: `git diff --check`; `PYTHONPATH=/home/hal9k/host-tools/agent-code-analyzer python3 -m pytest -q` (`97 passed`)
+- Notes: Added a shared rate limiter, normalized provider rate-limit handling, added freshness transitions and stale-search surfacing, and recorded the completion handoff in `docs/complete/`.
 
 ## Completion log template
 

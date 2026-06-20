@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, cast
+import sys
 from pathlib import Path
 
 import json
@@ -14,6 +15,7 @@ from agent_code_analyzer.agents import (
     HermesShellAgent,
     build_agent,
 )
+from agent_code_analyzer.rate_limit import RateLimitError
 
 
 class _CompletedProcess:
@@ -105,6 +107,17 @@ def test_shell_agent_raises_on_nonzero_exit(monkeypatch) -> None:
         agent.complete(AgentRequest(prompt="Assess"))
 
 
+def test_shell_agent_normalizes_rate_limit_errors(monkeypatch) -> None:
+    def fake_run(command, capture_output, text, check):  # noqa: ANN001
+        return _CompletedProcess(stdout="", stderr="429 too many requests", returncode=1)
+
+    monkeypatch.setattr("agent_code_analyzer.agents.hermes.subprocess.run", fake_run)
+    agent = HermesShellAgent()
+
+    with pytest.raises(RateLimitError):
+        agent.complete(AgentRequest(prompt="Assess"))
+
+
 def test_lib_agent_calls_run_agent_module(tmp_path: Path) -> None:
     hermes_root = tmp_path / "hermes"
     hermes_root.mkdir()
@@ -126,6 +139,28 @@ class AIAgent:
     assert response.content == "lib:Summarize the architecture"
     assert response.agent_kind == "hermes-lib"
     assert response.parsed == "lib:Summarize the architecture"
+
+
+def test_lib_agent_normalizes_rate_limit_errors(tmp_path: Path) -> None:
+    hermes_root = tmp_path / "hermes"
+    hermes_root.mkdir()
+    (hermes_root / "run_agent.py").write_text(
+        """
+class AIAgent:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+    def chat(self, prompt):
+        raise RuntimeError('too many requests')
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    sys.modules.pop("run_agent", None)
+    agent = HermesLibAgent(hermes_repo_root=hermes_root)
+
+    with pytest.raises(RateLimitError):
+        agent.complete(AgentRequest(prompt="Summarize the architecture"))
 
 
 def test_agent_caller_and_factory() -> None:
