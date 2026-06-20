@@ -154,6 +154,47 @@ def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(
         assert points[1].payload["start_row"] == 0
 
 
+def test_bootstrap_all_projects_rebuilds_every_project_with_stable_ids(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
+    fake_client = FakeQdrantClient()
+    index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())
+    object.__setattr__(index, "_client", fake_client)
+    monkeypatch.setattr("agent_code_analyzer.vector_index.get_vector_index", lambda: index)
+
+    project_roots = {
+        "alpha": tmp_path / "alpha",
+        "beta": tmp_path / "beta",
+    }
+    for name, root in project_roots.items():
+        root.mkdir()
+        (root / "app.py").write_text(f"def {name}():\n    return '{name}'\n", encoding="utf-8")
+        add_project(name, str(root), mode="directory")
+
+    fake_client.deleted_calls.clear()
+    fake_client.upsert_calls.clear()
+
+    summary_first = index.bootstrap_all_projects()
+    first_batches = [[point.id for point in call["points"]] for call in fake_client.upsert_calls]
+    first_projects = [call["points"][0].payload["project_name"] for call in fake_client.upsert_calls]
+
+    fake_client.deleted_calls.clear()
+    fake_client.upsert_calls.clear()
+
+    summary_second = index.bootstrap_all_projects()
+    second_batches = [[point.id for point in call["points"]] for call in fake_client.upsert_calls]
+    second_projects = [call["points"][0].payload["project_name"] for call in fake_client.upsert_calls]
+
+    assert summary_first["projects"] == 2
+    assert summary_first["files"] == 2
+    assert summary_first["points"] >= 2
+    assert summary_second["projects"] == 2
+    assert summary_second["files"] == 2
+    assert summary_second["points"] == summary_first["points"]
+    assert first_projects == ["alpha", "beta"]
+    assert second_projects == first_projects
+    assert second_batches == first_batches
+
+
 def test_semantic_search_filters_and_returns_payloads(monkeypatch) -> None:
     fake_client = FakeQdrantClient()
     index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider())

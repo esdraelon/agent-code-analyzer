@@ -40,18 +40,21 @@ Use this as the execution checklist for the milestone branch.
 - [x] Add tests for split/no-split behavior
 
 ## Milestone 4 — Full-project mass ingestion
-- [ ] Walk the project root once and discover semantic scopes
-- [ ] Generate descriptions for every supported semantic level
-- [ ] Persist descriptions and embeddings through the existing storage layers
-- [ ] Make rebuilds idempotent
-- [ ] Add tests for duplicate avoidance and stable counts
+- [x] Walk the project root once and discover semantic scopes
+- [x] Generate descriptions for every supported semantic level
+- [x] Persist descriptions and embeddings through the existing storage layers
+- [x] Make rebuilds idempotent
+- [x] Add tests for duplicate avoidance and stable counts
 
 ## Milestone 5 — Piecewise updates from fswatch diffs
 - [ ] Batch noisy file-system events into one update window
 - [ ] Normalize add/modify/delete/move events
 - [ ] Map changed lines back to the owning semantic scope
 - [ ] Invalidate and replace affected records only
-- [ ] Add tests for edit/delete/move/fallback cases
+- [ ] Add integration tests for edit/delete/move/fallback cases
+- [ ] Add integration tests for leaf-only mutations that must leave untouched scopes stable
+- [ ] Add integration tests for refactors that must update every affected semantic description
+- [ ] Add integration tests for parent-meaning drift that must invalidate ancestor scopes
 
 ## Milestone 6 — MCP surface for semantic description indexing
 - [ ] Expose a full rebuild command

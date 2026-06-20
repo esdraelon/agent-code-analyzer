@@ -11,7 +11,7 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 
 ## Current branch context
 
-- Branch: `feat/semantic-algorithm`
+- Branch: `feat/semantic-algorithm-m4-mass-ingestion`
 - Plan folder: `docs/plans/2026-06-18-semantic-algorithm/`
 - Source plan summary: `docs/plans/2026-06-18-semantic-algorithm-plan.md`
 
@@ -65,12 +65,20 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 - Notes: Added AST-aware method chunk spans, emitted chunk records during live sync and bootstrap, and kept small methods as a single chunk.
 
 ### Milestone 4 — Full-project mass ingestion pipeline
-- Status: planned
+- Status: complete
 - Pattern: Template Method + Coordinator
 - Completion evidence to collect:
   - project-wide rebuild works
   - rebuild is idempotent
   - storage upserts are stable
+  - mass ingestion keeps semantic records aligned across all indexed files
+
+- Date: 2026-06-20 06:18 CDT
+- Milestone: 4 — Full-project mass ingestion pipeline
+- Branch: feat/semantic-algorithm-m4-mass-ingestion
+- Commit: 3950b57
+- Verification: `uv run pytest -q tests/test_projects_sqlite.py tests/test_vector_index.py` (`13 passed`), `uv run pytest -q` (`87 passed`)
+- Notes: Added project-wide rebuild coverage for forced refreshes and bootstrap idempotence; mass ingestion now rebuilds every supported file and preserves stable point identity across repeated runs.
 
 ### Milestone 5 — Incremental fswatch diff refresh pipeline
 - Status: planned
