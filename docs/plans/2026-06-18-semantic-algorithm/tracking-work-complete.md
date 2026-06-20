@@ -27,12 +27,14 @@ This file is the living progress tracker for the semantic algorithm plan. Update
   - full test suite passes: `67 passed`
 
 ### Milestone 1 — Semantic record model and stable identities
-- Status: in progress
+- Status: complete
 - Pattern: Value Object + Data Mapper
-- Completion evidence to collect:
-  - record schema documented
-  - record identity strategy verified in tests
-  - storage mapping isolated from semantic logic
+- Completion evidence:
+  - `SemanticDescriptionRecord` implemented in `src/agent_code_analyzer/semantic_descriptions.py`
+  - stable identity builder implemented with scope-level, lineage, and anchor inputs only
+  - storage mapper implemented for payload round-trips
+  - targeted tests added in `tests/test_semantic_descriptions.py`
+  - repo coverage run completed: `92% total`, `11 passed` for the new semantic model tests, `78 passed` overall
 
 ### Milestone 2 — Semantic writer abstraction with a stub backend
 - Status: planned
