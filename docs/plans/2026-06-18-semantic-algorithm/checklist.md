@@ -72,11 +72,11 @@ Use this as the execution checklist for the milestone branch.
 - [x] Run the harness against `FakeAgent` first for deterministic baselines
 
 ## Milestone 8 — Documentation and operator guidance
-- [ ] Explain semantic descriptions and their scope levels
-- [ ] Explain rebuild vs diff refresh usage
-- [ ] Explain the stub/fake/real backend split
-- [ ] Keep docs synchronized with shipped behavior
-- [ ] Move the plan to `docs/complete/` when done
+- [x] Explain semantic descriptions and their scope levels
+- [x] Explain rebuild vs diff refresh usage
+- [x] Explain the stub/fake/real backend split
+- [x] Keep docs synchronized with shipped behavior
+- [x] Move the plan to `docs/complete/` when done
 
 ## Milestone 9 — Global agent rate limiting and semantic freshness lifecycle
 - [ ] Add one service-wide limiter for all agent calls

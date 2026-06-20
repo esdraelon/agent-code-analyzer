@@ -11,6 +11,7 @@ Use this server as the first choice for code-based questions and actions.
 - file- and symbol-based exclusion filtering during retrieval
 - refactor planning and ownership boundaries
 - line-accurate verification after source changes
+- semantic descriptions that sit alongside source-derived metadata and preserve scope-level summaries
 
 ## How to use it
 
@@ -28,6 +29,17 @@ Recommended tool order:
 Semantic-description maintenance tools:
 - `semantic_rebuild` for a full rebuild of the semantic-description layer
 - `semantic_refresh` for an incremental refresh from fswatch-style diffs
+
+Semantic-description rules:
+- treat semantic descriptions as summaries layered on top of source chunks, not replacements for them
+- use `semantic_rebuild` after onboarding, repairs, or large refactors that can invalidate many scopes
+- use `semantic_refresh` for local, incremental edits that only affect a small changed set
+- keep the mode explicit: say full rebuild or incremental refresh instead of relying on generic ingest/sync wording
+
+Backend split:
+- `FakeAgent` is the deterministic baseline used for repeatable tests and retrieval snapshots
+- the stub writer returns the deliberate no-response sentinel so plumbing can be verified without a live backend
+- the real backend is for live semantic generation and retrieval once the plumbing is proven
 
 If the user already knows which files or symbols should be ignored, pass `exclude_files` and/or `exclude_symbols` to `lexical_search`, `semantic_search`, or `search_code` instead of post-filtering the results manually.
 
