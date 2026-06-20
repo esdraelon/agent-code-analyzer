@@ -251,7 +251,7 @@ The server should present a small, stable facade, while each operation maps to a
 
 ## Milestone 7: Retrieval and quality verification
 
-**Status:** planned
+**Status:** complete
 
 **Objective:** Make the new descriptions searchable and prove that the summaries are useful for intent-level questions.
 

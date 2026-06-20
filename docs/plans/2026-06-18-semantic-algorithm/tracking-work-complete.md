@@ -111,12 +111,13 @@ This file is the living progress tracker for the semantic algorithm plan. Update
 - Notes: Added explicit semantic rebuild/refresh MCP tools, preserved the legacy ingest/sync paths, and updated the operator prompt to distinguish mass ingestion from fswatch diff refresh.
 
 ### Milestone 7 — Retrieval and quality verification
-- Status: planned
+- Status: complete
 - Pattern: Specification + Strategy
-- Completion evidence to collect:
+- Completion evidence:
   - architecture queries hit high-level summaries
   - algorithm queries hit detailed summaries
   - ranking and filtering are project-scoped
+  - retrieval quality checks run against `FakeAgent`-backed deterministic baselines first
 
 ### Milestone 8 — Operator guidance and documentation
 - Status: planned

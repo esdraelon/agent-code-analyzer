@@ -16,6 +16,7 @@ This folder contains the low-level requirements, milestone-specific designs, and
 - `designs/mcp-surface.md` — milestone 6 design: MCP surface for semantic indexing
 - `designs/retrieval-and-quality.md` — milestone 7 design: retrieval and quality checks
 - `designs/operator-guidance.md` — milestone 8 design: documentation and operator guidance
+- `designs/rate-limiting-and-freshness.md` — milestone 9 design: global agent rate limiting and semantic freshness lifecycle
 - `implementation-plan.md` — original milestone plan and pattern summary
 - `tracking-work-complete.md` — living progress ledger and completion evidence
 

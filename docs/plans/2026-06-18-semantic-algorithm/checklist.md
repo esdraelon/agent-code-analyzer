@@ -64,11 +64,12 @@ Use this as the execution checklist for the milestone branch.
 - [ ] Add tests or checks for command registration
 
 ## Milestone 7 — Retrieval and quality checks
-- [ ] Route architecture questions to high-level summaries
-- [ ] Route behavior questions to lower-level summaries
-- [ ] Preserve project scoping and lexical fallback
-- [ ] Add a repeatable retrieval quality harness
-- [ ] Verify ranking usefulness and latency
+- [x] Route architecture questions to high-level summaries
+- [x] Route behavior questions to lower-level summaries
+- [x] Preserve project scoping and lexical fallback
+- [x] Add a repeatable retrieval quality harness
+- [x] Verify ranking usefulness and latency
+- [x] Run the harness against `FakeAgent` first for deterministic baselines
 
 ## Milestone 8 — Documentation and operator guidance
 - [ ] Explain semantic descriptions and their scope levels
@@ -76,6 +77,14 @@ Use this as the execution checklist for the milestone branch.
 - [ ] Explain the stub/fake/real backend split
 - [ ] Keep docs synchronized with shipped behavior
 - [ ] Move the plan to `docs/complete/` when done
+
+## Milestone 9 — Global agent rate limiting and semantic freshness lifecycle
+- [ ] Add one service-wide limiter for all agent calls
+- [ ] Normalize provider-specific rate-limit signals in each agent backend
+- [ ] Add dirty / obsolete / fresh state transitions for semantic units
+- [ ] Guard freshness promotion with revision or hash checks
+- [ ] Keep dirty and obsolete records searchable with a stale-warning flag
+- [ ] Add tests for limiter behavior, race handling, and stale-hit surfacing
 
 ## Branch exit criteria
 - [ ] All milestone checklist items are complete or intentionally deferred
