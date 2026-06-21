@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -11,6 +12,8 @@ from typing import Any, Callable, Iterable
 
 from .freshness import get_freshness_registry
 from .projects import list_projects, sync_project_tree
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -150,6 +153,7 @@ class ProjectWatcherService:
             return self
         self._ensure_fswatch_available()
         self._stop_event.clear()
+        LOGGER.info("watcher_starting")
         self._watch_thread = threading.Thread(target=self._watch_loop, name="agent-code-analyzer-fswatch", daemon=True)
         self._sweep_thread = threading.Thread(target=self._sweep_loop, name="agent-code-analyzer-sweep", daemon=True)
         self._watch_thread.start()
@@ -157,6 +161,7 @@ class ProjectWatcherService:
         return self
 
     def stop(self) -> None:
+        LOGGER.info("watcher_stopping")
         self._stop_event.set()
         process = self._process
         if process is not None:
@@ -178,6 +183,7 @@ class ProjectWatcherService:
         self.stop()
 
     def scan_once(self) -> list[dict[str, Any]]:
+        LOGGER.info("gap_reconciliation_scan_start")
         results: list[dict[str, Any]] = []
         for project in self.project_provider():
             name = project["name"]
@@ -190,6 +196,7 @@ class ProjectWatcherService:
             if result.get("changed_file_count") or result.get("deleted_file_count"):
                 results.append(result)
         self._last_results = results
+        LOGGER.info("gap_reconciliation_scan_end results=%s", len(results))
         return results
 
     def enqueue_project(self, project_name: str, now: float | None = None) -> None:
@@ -210,6 +217,7 @@ class ProjectWatcherService:
             project_names = [project["name"] for project in active_projects]
         else:
             project_names = [matched["name"]]
+        LOGGER.info("fswatch_event projects=%s path=%s", project_names, event_path)
         self.enqueue_projects(project_names, now=now)
         return project_names
 

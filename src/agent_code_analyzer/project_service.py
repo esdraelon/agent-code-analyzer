@@ -4,6 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from . import project_storage as storage
+from .ingestion_state import (
+    IngestionCheckpoint,
+    begin_ingestion_checkpoint,
+    complete_ingestion_checkpoint,
+    fail_ingestion_checkpoint,
+    update_ingestion_checkpoint,
+    write_ingestion_checkpoint,
+)
 from .parsing import analyze_file, detect_language
 from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
@@ -317,58 +325,116 @@ def ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
             if row is not None:
                 return ProjectRowMapper.row_to_summary(row)
 
-    with storage._db_lock(db_path):
-        with storage._connect(db_path) as conn:
-            storage._ensure_project_schema(conn)
-            if refresh:
-                conn.execute("DELETE FROM symbols")
-                conn.execute("DELETE FROM files")
-                sync_steps.clear_project_indexes(conn, project)
+    current_files: dict[str, Path] = {}
+    total_symbols = 0
+    file_count = 0
+    project_languages: list[str] = []
+    checkpoint_started = False
+    try:
+        with storage._db_lock(db_path):
+            with storage._connect(db_path) as conn:
+                storage._ensure_project_schema(conn)
+                checkpoint_started = True
+                checkpoint = IngestionCheckpoint(
+                    project_name=project,
+                    root_path=str(root),
+                    mode="semantic_rebuild",
+                    phase="full_rebuild",
+                    status="running",
+                    queued_at=indexed_at,
+                    started_at=indexed_at,
+                    updated_at=indexed_at,
+                    completed_at=None,
+                    last_file_path=None,
+                    last_file_mtime_ns=None,
+                    last_file_content_hash="",
+                    total_file_count=0,
+                    processed_file_count=0,
+                    error_state="",
+                )
+                write_ingestion_checkpoint(conn, checkpoint)
+                if refresh:
+                    conn.execute("DELETE FROM symbols")
+                    conn.execute("DELETE FROM files")
+                    sync_steps.clear_project_indexes(conn, project)
 
-            current_files, _current_stats = sync_steps.scan_source_files(root)
-            total_symbols = 0
-            for rel_path in sorted(current_files):
-                total_symbols += _sync_project_file(
+                current_files, _current_stats = sync_steps.scan_source_files(root)
+                file_count = len(current_files)
+                checkpoint = checkpoint.with_updates(
+                    total_file_count=file_count,
+                    processed_file_count=0,
+                    phase="full_rebuild",
+                    updated_at=storage._now(),
+                )
+                write_ingestion_checkpoint(conn, checkpoint)
+                for processed_count, rel_path in enumerate(sorted(current_files), start=1):
+                    total_symbols += _sync_project_file(
+                        conn,
+                        project=project,
+                        root_path=root,
+                        resolved_path=current_files[rel_path],
+                        indexed_at=indexed_at,
+                    )
+                    snapshot = storage._project_file_snapshot(current_files[rel_path])
+                    checkpoint = checkpoint.with_updates(
+                        total_file_count=file_count,
+                        processed_file_count=processed_count,
+                        last_file_path=rel_path,
+                        last_file_mtime_ns=int(snapshot["file_mtime_ns"]),
+                        last_file_content_hash=str(snapshot["file_content_hash"]),
+                        updated_at=storage._now(),
+                    )
+                    write_ingestion_checkpoint(conn, checkpoint)
+
+                existing_state = conn.execute(
+                    "SELECT created_at FROM project_state WHERE project_name = ?",
+                    (project,),
+                ).fetchone()
+                created_at = existing_state["created_at"] if existing_state else indexed_at
+                project_languages = ProjectRowMapper.project_languages_from_conn(conn)
+                sync_steps.write_project_state(
                     conn,
                     project=project,
-                    root_path=root,
-                    resolved_path=current_files[rel_path],
+                    root=root,
+                    created_at=created_at,
                     indexed_at=indexed_at,
+                    file_count=file_count,
+                    supported_file_count=file_count,
+                    symbol_count=total_symbols,
+                    languages=project_languages,
                 )
 
-            existing_state = conn.execute(
-                "SELECT created_at FROM project_state WHERE project_name = ?",
-                (project,),
-            ).fetchone()
-            created_at = existing_state["created_at"] if existing_state else indexed_at
-            project_languages = ProjectRowMapper.project_languages_from_conn(conn)
-            sync_steps.write_project_state(
-                conn,
-                project=project,
-                root=root,
-                created_at=created_at,
-                indexed_at=indexed_at,
-                file_count=len(current_files),
-                supported_file_count=len(current_files),
-                symbol_count=total_symbols,
-                languages=project_languages,
-            )
+                checkpoint = checkpoint.with_updates(
+                    status="completed",
+                    phase="completed",
+                    completed_at=storage._now(),
+                    updated_at=storage._now(),
+                    error_state="",
+                )
+                write_ingestion_checkpoint(conn, checkpoint)
 
-    sync_steps.update_metadata_projection(
-        project=project,
-        indexed_at=indexed_at,
-        file_count=len(current_files),
-        supported_file_count=len(current_files),
-        symbol_count=total_symbols,
-        languages=project_languages,
-    )
+        sync_steps.update_metadata_projection(
+            project=project,
+            indexed_at=indexed_at,
+            file_count=file_count,
+            supported_file_count=file_count,
+            symbol_count=total_symbols,
+            languages=project_languages,
+        )
+    except Exception as exc:
+        if checkpoint_started:
+            try:
+                fail_ingestion_checkpoint(db_path, project=project, error_state=str(exc))
+            except Exception:
+                pass
+        raise
 
     return {
         "project": project,
         "root_path": str(root),
         "mode": project_data["mode"],
-        "file_count": len(current_files),
-        "supported_file_count": len(current_files),
+        "file_count": file_count,
+        "supported_file_count": file_count,
         "symbol_count": total_symbols,
         "indexed_at": indexed_at,
         "languages": project_languages,
@@ -381,93 +447,154 @@ def sync_project_tree(project: str) -> dict[str, Any]:
     db_path = Path(project_data["db_path"])
     now = storage._now()
 
-    with storage._db_lock(db_path):
-        with storage._connect(db_path) as conn:
-            storage._ensure_project_schema(conn)
-            existing_state = conn.execute(
-                """
-                SELECT project_name, root_path, created_at, updated_at, indexed_at, file_count, supported_file_count, symbol_count, languages
-                FROM project_state
-                WHERE project_name = ?
-                """,
-                (project,),
-            ).fetchone()
-            existing_files = {
-                row["rel_path"]: row
-                for row in conn.execute(
-                    """
-                    SELECT id, rel_path, abs_path, file_size, file_mtime_ns, file_content_hash
-                    FROM files
-                    """
-                ).fetchall()
-            }
-
-            current_files, current_stats = sync_steps.scan_source_files(root)
-
-            deleted_paths, unchanged_paths, changed_paths = sync_steps.project_sync_diff(
-                existing_files,
-                current_files,
-                current_stats,
-            )
-            upserted_paths: list[str] = []
-
-            for rel_path in changed_paths:
-                _sync_project_file(
-                    conn,
-                    project=project,
-                    root_path=root,
-                    resolved_path=current_files[rel_path],
-                    indexed_at=now,
+    checkpoint_started = False
+    try:
+        with storage._db_lock(db_path):
+            with storage._connect(db_path) as conn:
+                storage._ensure_project_schema(conn)
+                checkpoint_started = True
+                checkpoint = IngestionCheckpoint(
+                    project_name=project,
+                    root_path=str(root),
+                    mode="semantic_refresh",
+                    phase="gap_sweep",
+                    status="running",
+                    queued_at=now,
+                    started_at=now,
+                    updated_at=now,
+                    completed_at=None,
+                    last_file_path=None,
+                    last_file_mtime_ns=None,
+                    last_file_content_hash="",
+                    total_file_count=0,
+                    processed_file_count=0,
+                    error_state="",
                 )
-                upserted_paths.append(rel_path)
-
-            deleted_file_count = 0
-            for rel_path in deleted_paths:
-                row = existing_files[rel_path]
-                file_id = int(row["id"])
-                sync_steps.delete_file_indexes(conn, project, file_id)
-                conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
-                deleted_file_count += 1
-
-            if not upserted_paths and deleted_file_count == 0 and existing_state is not None:
-                return {
-                    "project": project,
-                    "root_path": str(root),
-                    "mode": project_data["mode"],
-                    "file_count": int(existing_state["file_count"]),
-                    "supported_file_count": int(existing_state["supported_file_count"]),
-                    "symbol_count": int(existing_state["symbol_count"]),
-                    "indexed_at": existing_state["indexed_at"],
-                    "changed_file_count": 0,
-                    "deleted_file_count": 0,
-                    "unchanged_file_count": len(unchanged_paths),
+                write_ingestion_checkpoint(conn, checkpoint)
+                existing_state = conn.execute(
+                    """
+                    SELECT project_name, root_path, created_at, updated_at, indexed_at, file_count, supported_file_count, symbol_count, languages
+                    FROM project_state
+                    WHERE project_name = ?
+                    """,
+                    (project,),
+                ).fetchone()
+                existing_files = {
+                    row["rel_path"]: row
+                    for row in conn.execute(
+                        """
+                        SELECT id, rel_path, abs_path, file_size, file_mtime_ns, file_content_hash
+                        FROM files
+                        """
+                    ).fetchall()
                 }
 
-            file_count = int(conn.execute("SELECT COUNT(*) AS count FROM files").fetchone()["count"])
-            symbol_count = int(conn.execute("SELECT COUNT(*) AS count FROM symbols").fetchone()["count"])
-            indexed_at = now
-            created_at = existing_state["created_at"] if existing_state else now
-            project_languages = ProjectRowMapper.project_languages_from_conn(conn)
-            sync_steps.write_project_state(
-                conn,
-                project=project,
-                root=root,
-                created_at=created_at,
-                indexed_at=indexed_at,
-                file_count=file_count,
-                supported_file_count=file_count,
-                symbol_count=symbol_count,
-                languages=project_languages,
-            )
+                current_files, current_stats = sync_steps.scan_source_files(root)
+                checkpoint = checkpoint.with_updates(
+                    total_file_count=len(current_files),
+                    processed_file_count=0,
+                    updated_at=storage._now(),
+                )
+                write_ingestion_checkpoint(conn, checkpoint)
 
-    sync_steps.update_metadata_projection(
-        project=project,
-        indexed_at=indexed_at,
-        file_count=file_count,
-        supported_file_count=file_count,
-        symbol_count=symbol_count,
-        languages=project_languages,
-    )
+                deleted_paths, unchanged_paths, changed_paths = sync_steps.project_sync_diff(
+                    existing_files,
+                    current_files,
+                    current_stats,
+                )
+                upserted_paths: list[str] = []
+
+                for processed_count, rel_path in enumerate(changed_paths, start=1):
+                    _sync_project_file(
+                        conn,
+                        project=project,
+                        root_path=root,
+                        resolved_path=current_files[rel_path],
+                        indexed_at=now,
+                    )
+                    upserted_paths.append(rel_path)
+                    snapshot = current_stats[rel_path]
+                    checkpoint = checkpoint.with_updates(
+                        total_file_count=len(current_files),
+                        processed_file_count=processed_count,
+                        last_file_path=rel_path,
+                        last_file_mtime_ns=int(snapshot["file_mtime_ns"]),
+                        last_file_content_hash=str(snapshot["file_content_hash"]),
+                        updated_at=storage._now(),
+                    )
+                    write_ingestion_checkpoint(conn, checkpoint)
+
+                deleted_file_count = 0
+                for rel_path in deleted_paths:
+                    row = existing_files[rel_path]
+                    file_id = int(row["id"])
+                    sync_steps.delete_file_indexes(conn, project, file_id)
+                    conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                    deleted_file_count += 1
+
+                if not upserted_paths and deleted_file_count == 0 and existing_state is not None:
+                    checkpoint = checkpoint.with_updates(
+                        status="completed",
+                        phase="completed",
+                        completed_at=storage._now(),
+                        updated_at=storage._now(),
+                        error_state="",
+                    )
+                    write_ingestion_checkpoint(conn, checkpoint)
+                    return {
+                        "project": project,
+                        "root_path": str(root),
+                        "mode": project_data["mode"],
+                        "file_count": int(existing_state["file_count"]),
+                        "supported_file_count": int(existing_state["supported_file_count"]),
+                        "symbol_count": int(existing_state["symbol_count"]),
+                        "indexed_at": existing_state["indexed_at"],
+                        "changed_file_count": 0,
+                        "deleted_file_count": 0,
+                        "unchanged_file_count": len(unchanged_paths),
+                    }
+
+                file_count = int(conn.execute("SELECT COUNT(*) AS count FROM files").fetchone()["count"])
+                symbol_count = int(conn.execute("SELECT COUNT(*) AS count FROM symbols").fetchone()["count"])
+                indexed_at = now
+                created_at = existing_state["created_at"] if existing_state else now
+                project_languages = ProjectRowMapper.project_languages_from_conn(conn)
+                sync_steps.write_project_state(
+                    conn,
+                    project=project,
+                    root=root,
+                    created_at=created_at,
+                    indexed_at=indexed_at,
+                    file_count=file_count,
+                    supported_file_count=file_count,
+                    symbol_count=symbol_count,
+                    languages=project_languages,
+                )
+
+                checkpoint = checkpoint.with_updates(
+                    status="completed",
+                    phase="completed",
+                    completed_at=storage._now(),
+                    updated_at=storage._now(),
+                    error_state="",
+                )
+                write_ingestion_checkpoint(conn, checkpoint)
+
+        sync_steps.update_metadata_projection(
+            project=project,
+            indexed_at=indexed_at,
+            file_count=file_count,
+            supported_file_count=file_count,
+            symbol_count=symbol_count,
+            languages=project_languages,
+        )
+    except Exception as exc:
+        if checkpoint_started:
+            try:
+                fail_ingestion_checkpoint(db_path, project=project, error_state=str(exc))
+            except Exception:
+                pass
+        raise
 
     return {
         "project": project,

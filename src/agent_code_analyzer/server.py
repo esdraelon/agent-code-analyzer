@@ -20,6 +20,7 @@ from .projects import (
     search_projects as search_project_records,
     sync_project_tree as sync_project_index,
 )
+from .ingestion_state import recover_incomplete_ingestion
 from .watcher import ProjectWatcherService
 from .vector_index import bootstrap_existing_projects, get_vector_index
 from .logging_config import setup_logging
@@ -261,9 +262,9 @@ def main() -> None:
 
     def _bootstrap_in_background() -> None:
         try:
-            for project in list_project_records():
-                LOGGER.info("bootstrap_project_start project=%s", project.get("name"))
-                sync_project_index(str(project["name"]))
+            recovered = recover_incomplete_ingestion()
+            if recovered:
+                LOGGER.info("recovered_incomplete_ingestion projects=%s", [entry.get("project", entry.get("error")) for entry in recovered])
             bootstrap_existing_projects()
             LOGGER.info("bootstrap_existing_projects_complete")
         except Exception as exc:  # pragma: no cover - defensive startup guard
