@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import sqlite3
 import threading
@@ -9,7 +8,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-DATA_DIR = Path(os.environ.get("AGENT_CODE_ANALYZER_HOME", Path.home() / ".agent-code-analyzer"))
+from .config import get_config
+
+_CONFIG = get_config()
+DATA_DIR = _CONFIG.storage.home_dir
 METADATA_DB = DATA_DIR / "metadata.sqlite3"
 PROJECTS_DIR = DATA_DIR / "projects"
 IGNORED_DIRS = {
@@ -84,12 +86,12 @@ def _acquire_locks(*paths: Path) -> Iterator[None]:
 def _connect(db_path: Path) -> sqlite3.Connection:
     _ensure_storage()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=5.0)
+    conn = sqlite3.connect(db_path, timeout=_CONFIG.storage.sqlite_connect_timeout_seconds)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute(f"PRAGMA busy_timeout={_CONFIG.storage.sqlite_busy_timeout_ms}")
     return conn
 
 

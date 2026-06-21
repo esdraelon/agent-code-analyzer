@@ -22,6 +22,7 @@ from .projects import (
 )
 from .watcher import ProjectWatcherService
 from .vector_index import bootstrap_existing_projects, get_vector_index
+from .logging_config import setup_logging
 
 SERVER_INSTRUCTIONS = (
     "Tree-sitter-backed MCP for code-first analysis, symbol navigation, and line-accurate verification. "
@@ -255,13 +256,16 @@ def read_file_excerpt(
 
 
 def main() -> None:
+    setup_logging()
     watcher = ProjectWatcherService().start()
 
     def _bootstrap_in_background() -> None:
         try:
             for project in list_project_records():
+                LOGGER.info("bootstrap_project_start project=%s", project.get("name"))
                 sync_project_index(str(project["name"]))
             bootstrap_existing_projects()
+            LOGGER.info("bootstrap_existing_projects_complete")
         except Exception as exc:  # pragma: no cover - defensive startup guard
             LOGGER.warning("Background bootstrap failed: %s", exc)
 

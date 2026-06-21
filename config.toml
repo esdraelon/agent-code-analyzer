@@ -1,0 +1,47 @@
+# agent-code-analyzer configuration
+#
+# This file is optional. If absent, the analyzer falls back to built-in defaults.
+# Environment variables still override these values:
+#   AGENT_CODE_ANALYZER_CONFIG
+#   AGENT_CODE_ANALYZER_HOME
+#   AGENT_CODE_ANALYZER_QDRANT_URL
+#   AGENT_CODE_ANALYZER_QDRANT_COLLECTION
+#   AGENT_CODE_ANALYZER_EMBEDDING_MODEL
+
+[storage]
+# Root directory for metadata and project databases.
+home_dir = "~/.agent-code-analyzer"
+# SQLite connect timeout in seconds.
+sqlite_connect_timeout_seconds = 5.0
+# SQLite busy timeout in milliseconds.
+sqlite_busy_timeout_ms = 5000
+
+[vector]
+# Qdrant endpoint used for semantic search.
+qdrant_url = "http://127.0.0.1:6333"
+# Qdrant collection name for semantic chunks.
+qdrant_collection = "agent_code_analyzer_chunks_v2"
+# SentenceTransformer embedding model.
+embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+
+[chunking]
+# Maximum line budget before AST chunk grouping splits a method/function.
+max_chunk_lines = 12
+# Minimum method length before chunk splitting is considered.
+min_split_lines = 8
+
+[rate_limit]
+# Service-wide limiter for all agent calls.
+# Burst to 2 in-flight calls, then refill at 6 calls per minute.
+capacity = 2
+refill_per_second = 0.1
+concurrency_limit = 2
+
+[semantic]
+# Default semantic writer backend. "fake" is deterministic and useful for tests.
+backend = "fake"
+# Switch to Hermes by setting:
+# backend = "hermes-lib"
+# hermes_repo_root = "~/.hermes/hermes-agent"
+# model = "gpt-5.4-mini"
+# provider = "openai-codex"

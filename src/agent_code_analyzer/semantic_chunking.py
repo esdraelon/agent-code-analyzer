@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .config import get_config
 from .parsing import ParsedFile
+
+_CONFIG = get_config()
 
 METHOD_NODE_TYPES: tuple[str, ...] = (
     "function_definition",
@@ -171,8 +174,8 @@ def build_method_chunk_spans(
     parsed: ParsedFile,
     symbol: dict[str, Any],
     *,
-    max_chunk_lines: int = 12,
-    min_split_lines: int = 8,
+    max_chunk_lines: int = _CONFIG.chunking.max_chunk_lines,
+    min_split_lines: int = _CONFIG.chunking.min_split_lines,
 ) -> list[SemanticChunkSpan]:
     """Return AST-aware chunk spans for a method/function symbol."""
 

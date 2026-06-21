@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Protocol
 
-DEFAULT_EMBEDDING_MODEL = os.environ.get(
-    "AGENT_CODE_ANALYZER_EMBEDDING_MODEL",
-    "sentence-transformers/all-MiniLM-L6-v2",
-)
+from .config import get_config
+
+DEFAULT_EMBEDDING_MODEL = get_config().vector.embedding_model
 
 
 class EmbeddingProvider(Protocol):

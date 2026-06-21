@@ -8,6 +8,7 @@ from .semantic_agent import (
     SemanticWriteResult,
     SemanticWriter,
     StubSemanticWriter,
+    build_semantic_writer,
     is_no_semantic_description,
 )
 from .semantic_chunking import SemanticChunkSpan, build_method_chunk_spans
@@ -42,6 +43,7 @@ __all__ = [
     "SemanticWriter",
     "SCOPE_LEVELS",
     "StubSemanticWriter",
+    "build_semantic_writer",
     "UPDATE_MODES",
     "build_method_chunk_spans",
     "build_semantic_description_record",
