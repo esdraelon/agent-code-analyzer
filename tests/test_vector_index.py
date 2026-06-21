@@ -97,8 +97,27 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
     assert fake_client.upsert_calls
 
     points = fake_client.upsert_calls[0]["points"]
-    file_point = points[0]
-    assert file_point.payload["project_name"] == "demo"
+    package_point = points[0]
+    assert package_point.payload["project_name"] == "demo"
+    assert package_point.payload["scope_type"] == "package"
+    assert package_point.payload["unit_type"] == "package"
+    assert package_point.payload["sqlite_uri"] == "sqlite://projects/demo/package"
+    assert package_point.payload["sqlite_file_uri"] == "sqlite://projects/demo"
+    assert package_point.payload["root_type"]
+    assert package_point.payload["start_row"] is None
+    assert package_point.payload["end_row"] is None
+    assert package_point.payload["content_text"]
+
+    module_point = points[1]
+    assert module_point.payload["scope_type"] == "module"
+    assert module_point.payload["unit_type"] == "module"
+    assert module_point.payload["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
+    assert module_point.payload["sqlite_uri"].endswith("/module")
+    assert module_point.payload["symbol_name"] == "app"
+    assert module_point.payload["start_row"] == 0
+    assert module_point.payload["end_row"] >= module_point.payload["start_row"]
+
+    file_point = points[2]
     assert file_point.payload["scope_type"] == "file"
     assert file_point.payload["unit_type"] == "file"
     assert file_point.payload["sqlite_uri"] == "sqlite://projects/demo/files/7"
@@ -108,7 +127,7 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
     assert file_point.payload["end_row"] >= file_point.payload["start_row"]
     assert file_point.payload["content_text"]
 
-    symbol_point = points[1]
+    symbol_point = points[3]
     assert symbol_point.payload["scope_type"] == "symbol"
     assert symbol_point.payload["unit_type"] == "method"
     assert symbol_point.payload["sqlite_file_uri"] == "sqlite://projects/demo/files/7"
@@ -117,7 +136,7 @@ def test_sync_analysis_payloads_include_project_and_sqlite_links(tmp_path: Path)
     assert symbol_point.payload["start_row"] == 0
     assert symbol_point.payload["end_row"] >= symbol_point.payload["start_row"]
 
-    chunk_point = points[2]
+    chunk_point = points[4]
     assert chunk_point.payload["scope_type"] == "chunk"
     assert chunk_point.payload["unit_type"] == "chunk"
     assert chunk_point.payload["parent_scope_id"]
@@ -147,12 +166,13 @@ def test_bootstrap_existing_project_reads_sqlite_and_preserves_symbol_row_links(
     assert fake_client.upsert_calls
 
     points = fake_client.upsert_calls[0]["points"]
-    assert points[0].payload["sqlite_file_uri"] == "sqlite://projects/existing/files/1"
-    assert points[0].payload["root_type"]
-    if len(points) > 1:
-        assert points[1].payload["sqlite_symbol_id"] == 1
-        assert points[1].payload["sqlite_file_uri"] == "sqlite://projects/existing/files/1"
-        assert points[1].payload["start_row"] == 0
+    file_point = next(point for point in points if point.payload["scope_type"] == "file")
+    assert file_point.payload["sqlite_file_uri"] == "sqlite://projects/existing/files/1"
+    assert file_point.payload["root_type"]
+    symbol_point = next(point for point in points if point.payload["scope_type"] == "symbol")
+    assert symbol_point.payload["sqlite_symbol_id"] == 1
+    assert symbol_point.payload["sqlite_file_uri"] == "sqlite://projects/existing/files/1"
+    assert symbol_point.payload["start_row"] == 0
 
 
 def test_bootstrap_all_projects_rebuilds_every_project_with_stable_ids(tmp_path: Path, monkeypatch) -> None:

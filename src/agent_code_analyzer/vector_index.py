@@ -312,6 +312,184 @@ class QdrantVectorIndex:
         )
         return writer.write(request)
 
+    def _module_name_from_path(self, project_root: str, file_path: str) -> str:
+        project_root_path = Path(project_root).resolve()
+        file_path_path = Path(file_path).resolve()
+        try:
+            relative = file_path_path.relative_to(project_root_path)
+        except Exception:
+            relative = file_path_path
+        relative = relative.with_suffix("")
+        parts = [part for part in relative.parts if part not in {".", ".."}]
+        if not parts:
+            return file_path_path.stem or "module"
+        return ".".join(parts)
+
+    def _build_package_module_points(
+        self,
+        *,
+        project: str,
+        project_root: str,
+        file_id: int,
+        file_path: str,
+        file_language: str,
+        file_languages: list[str],
+        indexed_at: str,
+        source_text: str,
+        outline_text: str,
+        root_type: str,
+        start_row: int,
+        start_column: int,
+        end_row: int,
+        end_column: int,
+    ) -> list[qmodels.PointStruct]:
+        project_slug = _slug_component(project)
+        package_sqlite_uri = f"sqlite://projects/{project_slug}/package"
+        package_source = f"Project {project}\nRoot: {project_root}\nFile: {file_path}"
+        package_outline = outline_text.strip() or root_type or project
+        package_record = build_semantic_description_record(
+            project=project,
+            scope_type="package",
+            file_path=project_root,
+            description_text="",
+            source_fingerprint=_content_hash(package_source),
+            symbol_name=project,
+            symbol_path=project,
+            parent_scope_id=None,
+            update_mode="mass_ingestion",
+            source_kind="package",
+            metadata={"project_root": project_root, "file_path": file_path, "language": file_language},
+        )
+        package_description = self._write_semantic_description(
+            project=project,
+            scope_type="package",
+            file_path=project_root,
+            source_text=package_source,
+            outline_text=package_outline,
+            line_start=None,
+            line_end=None,
+            symbol_path=project,
+            parent_scope_id=None,
+            source_kind="package",
+            metadata={"project_root": project_root, "file_path": file_path, "language": file_language},
+        )
+        package_payload = {
+            "project_name": project,
+            "project_root": project_root,
+            "file_id": file_id,
+            "sqlite_file_id": file_id,
+            "file_path": project_root,
+            "language": file_language,
+            "languages": file_languages,
+            "scope_type": "package",
+            "source_kind": "package",
+            "unit_type": "package",
+            "symbol_id": project,
+            "sqlite_symbol_id": project,
+            "symbol_order": 0,
+            "symbol_name": project,
+            "symbol_type": "package",
+            "root_type": root_type,
+            "start_row": None,
+            "start_column": None,
+            "end_row": None,
+            "end_column": None,
+            "sqlite_uri": package_sqlite_uri,
+            "scope_id": package_record.scope_id,
+            "sqlite_file_uri": f"sqlite://projects/{project_slug}",
+            "indexed_at": indexed_at,
+            "content_hash": _content_hash(package_source),
+            "chunk_text": package_outline,
+            "content_text": package_source,
+            "symbol_path": project,
+        }
+        package_payload.update(self._semantic_description_fields(package_description))
+        package_payload.update(self._freshness_fields(package_payload))
+
+        module_name = self._module_name_from_path(project_root, file_path)
+        module_sqlite_uri = f"{factory_sqlite_file_uri(project, file_id)}/module"
+        module_source = source_text or outline_text or file_path
+        module_outline = outline_text.strip() or module_name
+        module_record = build_semantic_description_record(
+            project=project,
+            scope_type="module",
+            file_path=file_path,
+            description_text="",
+            source_fingerprint=_content_hash(module_source),
+            symbol_name=module_name,
+            symbol_path=module_name,
+            line_start=start_row,
+            line_end=end_row,
+            parent_scope_id=package_record.scope_id,
+            update_mode="mass_ingestion",
+            source_kind="module",
+            metadata={"module_name": module_name, "file_path": file_path, "language": file_language},
+        )
+        module_description = self._write_semantic_description(
+            project=project,
+            scope_type="module",
+            file_path=file_path,
+            source_text=module_source,
+            outline_text=module_outline,
+            line_start=start_row,
+            line_end=end_row,
+            symbol_path=module_name,
+            parent_scope_id=package_record.scope_id,
+            source_kind="module",
+            metadata={"module_name": module_name, "file_path": file_path, "language": file_language},
+        )
+        module_payload = file_payload(
+            project=project,
+            project_root=project_root,
+            file_id=file_id,
+            file_path=file_path,
+            language=file_language,
+            languages=file_languages,
+            root_type=root_type,
+            start_row=start_row,
+            start_column=start_column,
+            end_row=end_row,
+            end_column=end_column,
+            indexed_at=indexed_at,
+            file_size=None,
+            file_mtime_ns=None,
+            chunk_text=module_outline,
+            source_kind="module",
+        )
+        module_payload.update(
+            {
+                "scope_type": "module",
+                "source_kind": "module",
+                "unit_type": "module",
+                "symbol_name": module_name,
+                "symbol_type": "module",
+                "symbol_path": module_name,
+                "sqlite_uri": module_sqlite_uri,
+                "scope_id": module_record.scope_id,
+                "content_hash": _content_hash(module_source),
+                "parent_scope_id": package_record.scope_id,
+            }
+        )
+        module_payload.update(self._semantic_description_fields(module_description))
+        module_payload.update(self._freshness_fields(module_payload))
+
+        return [
+            qmodels.PointStruct(
+                id=_stable_point_id(package_payload["sqlite_uri"]),
+                vector=self._embed_document(
+                    build_embedding_text(file_path=project_root, skeleton=package_outline, source_text=package_source)
+                ),
+                payload=package_payload,
+            ),
+            qmodels.PointStruct(
+                id=_stable_point_id(module_payload["sqlite_uri"]),
+                vector=self._embed_document(
+                    build_embedding_text(file_path=file_path, symbol_name=module_name, signature=module_outline, source_text=module_source)
+                ),
+                payload=module_payload,
+            ),
+        ]
+
     def _build_chunk_points(
         self,
         *,
@@ -610,6 +788,24 @@ class QdrantVectorIndex:
         root_node = parsed.tree.root_node
         file_languages = list(analysis.get("languages", [parsed.language]))
         source_text = parsed.source_code
+        package_module_points = self._build_package_module_points(
+            project=project,
+            project_root=project_root,
+            file_id=file_id,
+            file_path=file_path,
+            file_language=parsed.language,
+            file_languages=file_languages,
+            indexed_at=indexed_at,
+            source_text=source_text,
+            outline_text=str(analysis.get("skeleton", "")),
+            root_type=root_node.type,
+            start_row=int(root_node.start_point[0]),
+            start_column=int(root_node.start_point[1]),
+            end_row=int(root_node.end_point[0]),
+            end_column=int(root_node.end_point[1]),
+        )
+        module_point_payload = package_module_points[1].payload or {}
+        module_scope_id = str(module_point_payload.get("scope_id", ""))
         file_embedding_text = build_embedding_text(
             file_path=file_path,
             skeleton=f"{root_node.type}\n{analysis.get('skeleton', '')}",
@@ -641,12 +837,15 @@ class QdrantVectorIndex:
             outline_text=str(analysis.get("skeleton", "")),
             line_start=int(root_node.start_point[0]),
             line_end=int(root_node.end_point[0]),
+            parent_scope_id=module_scope_id or None,
             source_kind="tree-sitter",
             metadata={"root_type": root_node.type, "language": parsed.language},
         )
         file_payload.update(self._semantic_description_fields(file_description))
         file_payload.update(self._freshness_fields(file_payload))
+        file_payload["parent_scope_id"] = module_scope_id or None
         points = [
+            *package_module_points,
             qmodels.PointStruct(
                 id=_stable_point_id(file_payload["sqlite_uri"]),
                 vector=self._embed_document(file_embedding_text),
@@ -679,12 +878,13 @@ class QdrantVectorIndex:
                 line_start=symbol_ordered.get("start_point", {}).get("row"),
                 line_end=symbol_ordered.get("end_point", {}).get("row"),
                 symbol_path=str(symbol_ordered.get("name", "")) or None,
-                parent_scope_id=None,
+                parent_scope_id=str(file_description.request.record.scope_id),
                 source_kind="tree-sitter",
                 metadata={"symbol_type": symbol_ordered.get("type", "")},
             )
             payload.update(self._semantic_description_fields(symbol_description))
             payload.update(self._freshness_fields(payload))
+            payload["parent_scope_id"] = str(file_description.request.record.scope_id)
             symbol_embedding_text = build_embedding_text(
                 file_path=file_path,
                 symbol_name=str(symbol_ordered.get("name", "")),
@@ -735,6 +935,29 @@ class QdrantVectorIndex:
                 parsed = analyze_file(abs_path)["parsed"]
             except Exception:
                 parsed = None
+        root_type = str(file_record.get("root_type", ""))
+        start_row = int(file_record.get("start_point", {}).get("row", 0))
+        start_column = int(file_record.get("start_point", {}).get("column", 0))
+        end_row = int(file_record.get("end_point", {}).get("row", 0))
+        end_column = int(file_record.get("end_point", {}).get("column", 0))
+        package_module_points = self._build_package_module_points(
+            project=project,
+            project_root=project_root,
+            file_id=file_id,
+            file_path=file_path,
+            file_language=str(file_record["language"]),
+            file_languages=file_languages,
+            indexed_at=indexed_at,
+            source_text=str(file_record.get("skeleton", "")) or file_path,
+            outline_text=f"{root_type}\n{str(file_record.get('skeleton', ''))}",
+            root_type=root_type,
+            start_row=start_row,
+            start_column=start_column,
+            end_row=end_row,
+            end_column=end_column,
+        )
+        module_point_payload = package_module_points[1].payload or {}
+        module_scope_id = str(module_point_payload.get("scope_id", ""))
         file_payload = self._file_payload(
             project=project,
             project_root=project_root,
@@ -742,11 +965,11 @@ class QdrantVectorIndex:
             file_path=file_path,
             language=str(file_record["language"]),
             languages=file_languages,
-            root_type=str(file_record.get("root_type", "")),
-            start_row=int(file_record.get("start_point", {}).get("row", 0)),
-            start_column=int(file_record.get("start_point", {}).get("column", 0)),
-            end_row=int(file_record.get("end_point", {}).get("row", 0)),
-            end_column=int(file_record.get("end_point", {}).get("column", 0)),
+            root_type=root_type,
+            start_row=start_row,
+            start_column=start_column,
+            end_row=end_row,
+            end_column=end_column,
             indexed_at=indexed_at,
             file_size=file_record.get("file_size"),
             file_mtime_ns=file_record.get("file_mtime_ns"),
@@ -759,18 +982,21 @@ class QdrantVectorIndex:
             file_path=file_path,
             source_text=str(file_record.get("skeleton", "")) or file_path,
             outline_text=f"{str(file_record.get('root_type', ''))}\n{str(file_record.get('skeleton', ''))}",
-            line_start=int(file_record.get("start_point", {}).get("row", 0)),
-            line_end=int(file_record.get("end_point", {}).get("row", 0)),
+            line_start=start_row,
+            line_end=end_row,
+            parent_scope_id=module_scope_id or None,
             source_kind="tree-sitter",
             metadata={"root_type": file_record.get("root_type", ""), "language": file_record["language"]},
         )
         file_payload.update(self._semantic_description_fields(file_description))
         file_payload.update(self._freshness_fields(file_payload))
+        file_payload["parent_scope_id"] = module_scope_id or None
         file_embedding_text = build_embedding_text(
             file_path=file_path,
             skeleton=f"{str(file_record.get('root_type', ''))}\n{str(file_record.get('skeleton', ''))}",
         )
         points = [
+            *package_module_points,
             qmodels.PointStruct(
                 id=_stable_point_id(file_payload["sqlite_uri"]),
                 vector=self._embed_document(file_embedding_text),
@@ -802,12 +1028,13 @@ class QdrantVectorIndex:
                 line_start=symbol_ordered.get("start_point", {}).get("row"),
                 line_end=symbol_ordered.get("end_point", {}).get("row"),
                 symbol_path=str(symbol_ordered.get("name", "")) or None,
-                parent_scope_id=None,
+                parent_scope_id=str(file_description.request.record.scope_id),
                 source_kind="tree-sitter",
                 metadata={"symbol_type": symbol_ordered.get("type", "")},
             )
             payload.update(self._semantic_description_fields(symbol_description))
             payload.update(self._freshness_fields(payload))
+            payload["parent_scope_id"] = str(file_description.request.record.scope_id)
             symbol_embedding_text = build_embedding_text(
                 file_path=file_path,
                 symbol_name=str(symbol_ordered.get("name", "")),

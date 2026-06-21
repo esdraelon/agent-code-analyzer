@@ -21,11 +21,12 @@ def test_one_file_hermes_harness_writes_a_report_and_logs_requests(tmp_path: Pat
     assert report["agent_log"]["count"] >= 1
     assert report["hermes_log"]["count"] >= 1
 
-    first_request = report["agent_log"]["requests"][0]
-    assert "Write a concise semantic description for file scope." in first_request["prompt"]
+    requests = report["agent_log"]["requests"]
+    first_request = requests[0]
+    assert "Write a concise semantic description for package scope." in first_request["prompt"]
     assert result.ingest_summary["file_count"] == 1
     assert Path(report["agent_log"]["path"]).exists()
     assert Path(report["hermes_log"]["path"]).exists()
-    assert "src/demo.py" in first_request["prompt"]
+    assert any("src/demo.py" in request["prompt"] for request in requests)
     assert report["qdrant"]["points"][0]["payload"]["semantic_description_backend"] == "hermes-lib"
     assert report["qdrant"]["points"][0]["payload"]["semantic_description_state"] in {"description", "no_response"}

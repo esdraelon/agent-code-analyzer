@@ -164,42 +164,69 @@ def test_agent_semantic_writer_wraps_backend_failures() -> None:
         writer.write(SemanticWriteRequest(record=record, source_text="print('hi')\n"))
 
 
-def test_vector_index_emits_method_chunks_for_long_methods(tmp_path: Path) -> None:
+def test_vector_index_emits_package_module_and_method_chunks_for_two_file_project(tmp_path: Path) -> None:
     root = tmp_path / "demo"
     root.mkdir()
-    file_path = root / "big.py"
-    file_path.write_text(
+    first_file_path = root / "big.py"
+    first_file_path.write_text(
         """def calculate(value):\n    total = 0\n    if value > 10:\n        total += value\n    else:\n        total -= value\n    for step in range(3):\n        total += step\n    while total < 50:\n        total += 2\n    return total\n""",
         encoding="utf-8",
     )
+    second_file_path = root / "helper.py"
+    second_file_path.write_text(
+        """def normalize(value):\n    return value.strip().lower()\n""",
+        encoding="utf-8",
+    )
 
-    analysis = analyze_file(str(file_path))
     writer = CapturingWriter()
     index = QdrantVectorIndex(url="http://example.test", embedding_provider=FakeEmbeddingProvider(), semantic_writer=writer)
     fake_client = FakeQdrantClient()
     object.__setattr__(index, "_client", fake_client)
 
-    result = index.sync_analysis(
-        project="demo",
-        project_root=root,
-        file_id=8,
-        file_path=str(file_path),
-        analysis=analysis,
-        indexed_at="2026-06-19T21:00:00",
-        file_size=file_path.stat().st_size,
-        file_mtime_ns=file_path.stat().st_mtime_ns,
-    )
+    for file_id, file_path in enumerate([first_file_path, second_file_path], start=8):
+        analysis = analyze_file(str(file_path))
+        result = index.sync_analysis(
+            project="demo",
+            project_root=root,
+            file_id=file_id,
+            file_path=str(file_path),
+            analysis=analysis,
+            indexed_at="2026-06-19T21:00:00",
+            file_size=file_path.stat().st_size,
+            file_mtime_ns=file_path.stat().st_mtime_ns,
+        )
+        assert result["synced"] is True
 
-    assert result["synced"] is True
-    assert len(writer.requests) >= 3
+    scope_types = [request.record.scope_type for request in writer.requests]
+    assert scope_types.count("package") == 2
+    assert scope_types.count("module") == 2
+    assert scope_types.count("file") == 2
+    assert scope_types.count("chunk") >= 2
+
+    package_requests = [request for request in writer.requests if request.record.scope_type == "package"]
+    module_requests = [request for request in writer.requests if request.record.scope_type == "module"]
     chunk_requests = [request for request in writer.requests if request.record.scope_type == "chunk"]
-    assert len(chunk_requests) >= 2
+    assert len({request.record.scope_id for request in package_requests}) == 1
+    assert len({request.record.scope_id for request in module_requests}) == 2
+    assert all(request.record.parent_scope_id for request in module_requests)
     assert all(request.record.parent_scope_id for request in chunk_requests)
 
-    payloads = fake_client.upsert_calls[0]["points"]
-    chunk_payloads = [point.payload for point in payloads if point.payload["scope_type"] == "chunk"]
+    payloads = [point.payload for call in fake_client.upsert_calls for point in call["points"]]
+    payload_scope_types = {payload["scope_type"] for payload in payloads}
+    assert {"package", "module", "file", "chunk"} <= payload_scope_types
+    assert sum(1 for payload in payloads if payload["scope_type"] == "package") == 2
+    assert len({payload["sqlite_uri"] for payload in payloads if payload["scope_type"] == "package"}) == 1
+    assert {payload["file_path"] for payload in payloads if payload["scope_type"] == "module"} == {
+        str(first_file_path),
+        str(second_file_path),
+    }
+    assert {payload["file_path"] for payload in payloads if payload["scope_type"] == "file"} == {
+        str(first_file_path),
+        str(second_file_path),
+    }
+
+    chunk_payloads = [payload for payload in payloads if payload["scope_type"] == "chunk"]
     assert len(chunk_payloads) >= 2
     assert all(payload["unit_type"] == "chunk" for payload in chunk_payloads)
-    assert all(payload["parent_scope_id"] for payload in chunk_payloads)
     assert any("if value > 10" in payload["chunk_text"] for payload in chunk_payloads)
     assert any("while total < 50" in payload["chunk_text"] for payload in chunk_payloads)

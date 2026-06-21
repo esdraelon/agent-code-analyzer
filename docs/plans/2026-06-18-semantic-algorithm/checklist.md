@@ -4,10 +4,14 @@ Use this as the execution checklist for the milestone branch.
 
 ## Steering
 - Pull from `origin` and branch from `main` after each remote merge.
-- Each milestone gets its own branch.
+- Each milestone gets its own stacked branch with a relevant name.
+- Every step must include unit tests and integration tests using the 2-file project fixture, and those tests must validate every requirement added in that step.
+- Update this checklist as the work moves, so the branch always reflects current scope and completion state.
 - Keep **95% new-line coverage** on the changed milestone scope.
 - Keep **90% total coverage** for the repository.
 - After each milestone, validate MCP with the ORK3 integration snapshot suite (`uv run python scripts/ork3_eval_snapshot.py`).
+- Run all new tests and all prior tests before reporting completion.
+- Commit all code changes before moving to the next stacked branch.
 
 ## Milestone 0 — Agent abstraction and Hermes adapter POC
 - [x] Agent request/response contract is normalized

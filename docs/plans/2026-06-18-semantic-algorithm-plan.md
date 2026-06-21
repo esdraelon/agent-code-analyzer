@@ -65,11 +65,191 @@ The implementation must support two update styles:
 
 ---
 
+## Gap Analysis Overview
+
+**Goal:** Every major part of a method, every method, class, module, file, and package should have a semantic description that captures both *what it does* and *why it exists*.
+
+**Cross-reference target:** Each semantic record should be tied back to stable structural anchors so a query can resolve to:
+- project and package context
+- file path and line range
+- symbol signature and symbol path
+- AST node identity or subtree boundary
+- Tree-sitter node / chunk boundary
+- parent scope and child scope lineage
+
+**Desired lookup flow:**
+1. semantic query returns intent-level candidates first
+2. candidates map to the relevant semantic scope records
+3. each scope record resolves to source file, lines, symbol, and hierarchy metadata
+4. the UI / API can expose the result as a cross-reference bundle rather than a single fuzzy hit
+
+**Current state:**
+- file-level semantic descriptions exist and are written during indexing
+- method chunking exists for long/complex methods
+- the semantic writer boundary exists, including a stub/no-response path
+- the record model already accepts package, module, file, class, method, and chunk scope types
+- the current ingestion path does *not yet* populate the full organizational tree from package down through chunks in a complete, consistent way
+
+**Gap summary:**
+- package and module summaries are not emitted as dedicated semantic records
+- class-level semantic coverage is present only where symbol traversal reaches it; it is not yet an explicit tree-wide pass
+- method-level descriptions exist, but the “major parts of a method” cross-reference layer needs clearer anchoring and retrieval behavior
+- chunking is limited to method bodies, so the hierarchy is not yet uniform from package to chunk
+- semantic results need a stronger contract for linking embeddings to source anchors, AST entries, and Tree-sitter nodes
+
+**Planned outcome:**
+- query semantic intent once, then fan out to the best matching file/class/method/chunk records
+- preserve the structural breadcrumb trail needed to navigate back to source
+- make the semantic layer usable for both architectural questions and algorithmic questions
+- keep the retrieval output suitable for review, debugging, and code navigation
+
+**Gap analysis workstreams:**
+1. **Coverage audit** — verify which scope levels are actually emitted today, and which are only representable in the schema.
+2. **Anchor audit** — verify which records carry stable file, line, symbol, AST, and Tree-sitter references.
+3. **Hierarchy audit** — verify whether each child scope can point back to its parent scope without losing context.
+4. **Query audit** — verify the shape of a semantic result when the lookup should return multiple cross-referenced locations instead of one hit.
+5. **Refresh audit** — verify how full rebuild and incremental refresh differ in scope, and which levels are refreshed by each path.
+
+## Gap Analysis Requirements
+
+The following requirements are the normative output of the gap analysis. They define what the development plan must deliver.
+
+### R1. Semantic scope coverage
+- The system must generate dedicated semantic records for package, module, file, class, method, and chunk scopes.
+- Package and module records must be distinct from file records.
+- File records must remain available even when higher-level package or module records exist.
+- Class records must be generated as first-class semantic records for class-like symbols.
+- Method records must be generated as first-class semantic records for method and function symbols.
+- Chunk records must be generated for major parts of long or complex methods.
+- The system must distinguish a whole method from the chunks inside that method.
+
+### R2. Stable semantic identity and anchors
+- Every semantic record must have a stable scope identity that survives rebuilds for unchanged code.
+- Every semantic record must store the source file path.
+- Every semantic record that is line-bound must store start and end line numbers.
+- Every symbol-based semantic record must store a signature or symbol path.
+- Every semantic record must store an AST or Tree-sitter anchor, or an equivalent structural pointer.
+- Every child scope must store a parent scope reference when one exists.
+- Every semantic record must include a fingerprint or content hash for refresh and deduplication.
+
+### R3. Semantic meaning by scope level
+- Package and module descriptions must emphasize intent, ownership, and dependencies.
+- File descriptions must explain the file’s role in the system.
+- Class descriptions must explain responsibilities and state boundaries.
+- Method descriptions must explain algorithmic behavior and control flow.
+- Chunk descriptions must explain the major semantic parts of a method.
+- All descriptions must be plain-language text suitable for semantic search and retrieval.
+
+### R4. Cross-reference query behavior
+- A single semantic query must be able to return multiple scope levels for the same code region.
+- Results must be groupable by source file.
+- Results must be groupable by symbol hierarchy.
+- Results must expose the source line range for each match.
+- Results must expose the structural path for each match.
+- Results must support upward navigation from chunk to method to class to file to module to package.
+- Results must support downward navigation from package to module to file to class to method to chunk.
+
+### R5. Refresh and invalidation behavior
+- A full rebuild must regenerate all supported semantic levels.
+- An incremental refresh must regenerate only impacted scopes.
+- Unrelated files and scopes must remain untouched during an incremental refresh.
+- Parent scopes must be refreshed when child changes alter the parent’s meaning.
+- Method chunking must be recomputed when a method changes shape or size.
+- Each generated semantic record must record whether it came from mass ingestion or fswatch-driven refresh.
+
+### R6. Verification requirements
+- The implementation plan must include tests proving package, module, class, method, and chunk records can all be represented.
+- The implementation plan must include tests proving semantic results preserve file, line, symbol, and parent-scope anchors.
+- The implementation plan must include tests proving method chunking splits long methods into multiple semantic chunks.
+- The implementation plan must include tests proving a semantic query can cross-reference multiple levels for one source region.
+- The implementation plan must include tests proving full rebuild and incremental refresh behave differently.
+- The implementation plan must include tests proving descriptions remain plain-language and search-oriented.
+
+### R7. Development-plan implications
+- The development plan must treat package/module emission as a separate work item, not an implied side effect of file indexing.
+- The development plan must treat hierarchy and anchor preservation as first-class requirements, not implementation details.
+- The development plan must treat cross-reference retrieval as a deliverable, not a UI-only concern.
+- The development plan must treat refresh invalidation as part of the semantic contract.
+- The development plan must include explicit acceptance criteria for each requirement above.
+
+## Requirements-by-milestone breakdown
+
+Use this map to translate the requirements above into implementation checkpoints without re-interpreting the scope.
+
+- **Task 1 — Record model**: satisfies R1, R2, and the schema-related part of R6.
+- **Task 2 — Stub writer abstraction**: satisfies R3 and the writer-boundary part of R6.
+- **Task 3 — Tree-sitter chunking**: satisfies R1, R3, R4, and the chunking part of R6.
+- **Task 4 — Mass ingestion**: satisfies R1, R2, R5, and the rebuild-related part of R6.
+- **Task 5 — fswatch diff updates**: satisfies R2, R4, R5, and the incremental-refresh part of R6.
+- **Task 6 — MCP surface hooks**: satisfies R5, R6, and the plan-implication part of R7.
+- **Task 7 — Retrieval and quality checks**: satisfies R4 and the verification part of R6.
+- **Task 8 — Docs and operator guidance**: satisfies R3, R6, and the explicit-documentation part of R7.
+
+## Milestone checklist
+
+Use this checklist as the implementation gate. A task is not complete until every box in its checklist is satisfied and verified.
+
+### Task 1 — Record model
+- [ ] The schema represents package, module, file, class, method, and chunk records.
+- [ ] Each record has a stable identity suitable for idempotent upserts.
+- [ ] Each record includes file path, symbol name when applicable, line anchors when applicable, content hash, description text, update mode, and lineage.
+- [ ] Tests prove the schema can preserve parent/child relationships and support rebuild plus incremental refresh.
+
+### Task 2 — Stub writer abstraction
+- [ ] The writer accepts a source unit and metadata through a narrow interface.
+- [ ] The stub returns a deliberate no-response sentinel consistently.
+- [ ] The caller can distinguish no-response from transport failure.
+- [ ] Tests prove the stub is callable from indexing without a model dependency.
+
+### Task 3 — Tree-sitter chunking
+- [ ] Chunk boundaries prefer AST structure over raw line counts.
+- [ ] Long or complex methods split into meaningful chunks.
+- [ ] Small methods stay whole.
+- [ ] Each chunk preserves parent method identity and line-accurate anchors.
+- [ ] Tests prove chunking produces useful, traceable units.
+
+### Task 4 — Mass ingestion
+- [ ] The pipeline walks the project root once per rebuild.
+- [ ] The pipeline derives units from Tree-sitter structure and project metadata.
+- [ ] Descriptions and embeddings are written for every supported semantic level.
+- [ ] Re-running ingestion does not duplicate records.
+- [ ] Tests prove counts and identities remain stable for unchanged input.
+
+### Task 5 — fswatch diff updates
+- [ ] File-system events are batched into a short-lived update window.
+- [ ] Related edits are grouped into the smallest useful context bundle.
+- [ ] Update records carry change type, paths, anchors, parent scope, and diff context.
+- [ ] Affected records are invalidated before replacements are written.
+- [ ] Deletions, moves, and refactors behave conservatively and preserve identity where possible.
+- [ ] Tests prove one-file edits refresh only the affected scopes.
+
+### Task 6 — MCP surface hooks
+- [ ] The server exposes a full rebuild command.
+- [ ] The server exposes a piecewise refresh command.
+- [ ] The server makes semantic-description mode obvious to callers.
+- [ ] Existing lexical and source-chunk paths remain intact.
+- [ ] Prompt guidance explains when to use rebuild versus diff refresh.
+
+### Task 7 — Retrieval and quality checks
+- [ ] Semantic retrieval prefers intent before lexical matching.
+- [ ] Architecture queries favor package/module/file descriptions.
+- [ ] Behavior and algorithm queries favor class/method/chunk descriptions.
+- [ ] Retrieval stays project-scoped.
+- [ ] Tests prove both ingestion modes remain searchable and the stub path still works.
+
+### Task 8 — Docs and operator guidance
+- [ ] Docs define the semantic-description workflow clearly.
+- [ ] Docs explain the stub agent, mass ingestion, and fswatch refresh modes.
+- [ ] Docs explain how chunking changes method-level summaries.
+- [ ] Docs match the shipped behavior.
+
+---
+
 ## Milestone 7: Semantic algorithm description indexing
 
 **Status:** planned
 
-**Objective:** Build a new semantic description pipeline that indexes plain-language summaries for package, module, file, class, method, and chunk scopes.
+**Objective:** Build a new semantic description pipeline that indexes plain-language summaries for package, module, file, class, method, and chunk scopes, with explicit source anchors for semantic search and cross-reference.
 
 **Planned shape:**
 - Keep Tree-sitter as the boundary detector for files, classes, methods, and complicated method regions.
@@ -79,6 +259,7 @@ The implementation must support two update styles:
 - Store separate descriptions for different semantic levels so retrieval can target intent, structure, or algorithmic behavior as needed.
 - Treat package/module/file descriptions as architecture and intent summaries.
 - Treat class/method/chunk descriptions as algorithmic summaries focused on control flow, responsibilities, and behavior.
+- Attach each description to stable anchors: file path, line span, signature, symbol path, and AST / Tree-sitter lineage.
 - Support a full rebuild path and an incremental diff-based refresh path.
 
 **Likely files:**

@@ -89,6 +89,15 @@
 - The schema can preserve parent/child lineage.
 - The schema supports both rebuild and incremental refresh.
 - The schema is suitable for retrieval and refresh without requiring code-specific special cases.
+- A single record instance can be mapped back to a unique source unit using only the stored metadata.
+- A reviewer can tell whether a record came from a parent scope or a nested child scope without inspecting code.
+- A rebuild of unchanged code yields the same stable identity and does not create a duplicate logical record.
+
+### Miss-prevention checks
+- Do not hide package/module identity inside file records.
+- Do not rely on description text as the only source of identity.
+- Do not omit line anchors merely because the record also has a symbol name.
+- Do not collapse parent lineage into a free-form string if a structured reference is available.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/vector_index.py`
@@ -119,6 +128,14 @@
 - Tests prove the sentinel path.
 - Tests prove that the no-response case is not conflated with transport failure.
 - The writer boundary is narrow enough to swap backends later.
+- The caller can inject a deterministic backend for tests without touching the indexing logic.
+- The same source unit and metadata always produce the same stub-visible outcome.
+
+### Miss-prevention checks
+- Do not let the stub leak model-specific semantics into the caller contract.
+- Do not treat a deliberate sentinel as a failure.
+- Do not hard-code a Hermes-only execution path into indexing.
+- Do not force the rest of the pipeline to know which backend was used.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/semantic_agent.py` if created
@@ -147,6 +164,14 @@
 - Small methods remain a single chunk.
 - Every chunk can be traced back to its parent method and file.
 - Chunk spans remain line-accurate for later refreshes.
+- The chunker can distinguish algorithmic boundaries from arbitrary line splits.
+- Chunk output remains stable when the same method is processed twice without changes.
+
+### Miss-prevention checks
+- Do not split a method solely because it is long if the structure is not actually worth fragmenting.
+- Do not generate chunks that cannot be mapped back to the parent method.
+- Do not lose line accuracy when chunk boundaries are derived from AST nodes.
+- Do not produce tiny fragments that carry no semantic meaning.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/semantic_chunking.py` if created
@@ -176,6 +201,14 @@
 - Re-running mass ingestion does not create duplicate semantic records.
 - Record counts are stable for the same input tree.
 - The pipeline can be exercised in isolation by tests.
+- A rebuild preserves stable identities for unchanged units.
+- The rebuild path does not depend on the fswatch update path to be correct.
+
+### Miss-prevention checks
+- Do not treat mass ingestion as a partial refresh.
+- Do not skip package/module emission because file records already exist.
+- Do not allow repeated runs to create duplicate logical records.
+- Do not couple rebuild correctness to watcher events.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/projects.py`
@@ -220,6 +253,13 @@
 - Deletions remove the corresponding semantic records.
 - Move/refactor cases preserve identity where possible.
 - Multiple rapid saves collapse into one batch.
+- The update path records enough context to reconstruct the change decision later.
+
+### Miss-prevention checks
+- Do not refresh the whole project when one file changes.
+- Do not drop parent lineage when grouping related edits.
+- Do not treat a move like a delete-plus-add if the identity can be preserved.
+- Do not let old refresh results overwrite newer dirty state.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/watcher.py`
@@ -247,6 +287,14 @@
 - The MCP surface can initiate both ingestion modes.
 - Existing tools continue to function.
 - Operators can tell which mode they are invoking.
+- The exposed commands have stable names and clear input semantics.
+- The server layer does not force callers to know internal pipeline details.
+
+### Miss-prevention checks
+- Do not remove or rename existing lexical tools as part of this feature.
+- Do not expose refresh mode without a clear operator-facing distinction.
+- Do not make the operator guess whether a command does a rebuild or an incremental update.
+- Do not let documentation drift away from the actual server surface.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/server.py`
@@ -276,6 +324,13 @@
 - Project scoping is preserved.
 - The stub path is still accepted during early development.
 - Both ingestion modes remain searchable.
+- Search results can be evaluated deterministically with the fake backend.
+
+### Miss-prevention checks
+- Do not let lexical fallback override the semantic preference order silently.
+- Do not return results outside the requested project.
+- Do not treat the stub path as a special test-only exception.
+- Do not allow search quality checks to depend on a live model when a deterministic backend will do.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/vector_index.py`
@@ -304,6 +359,13 @@
 - The docs describe both operating modes clearly.
 - The docs match the actual server behavior.
 - A new developer can understand the workflow from the docs alone.
+- The docs explain the failure modes and when to choose one mode over another.
+
+### Miss-prevention checks
+- Do not describe behavior that the server does not actually expose.
+- Do not leave the operator guidance ambiguous about when to rebuild versus diff refresh.
+- Do not omit the stub behavior from the documentation.
+- Do not publish docs before the implementation surface is stable enough to match them.
 
 ### Implementation surfaces
 - `docs/prompts/agent-code-analyzer-mcp-prompt.md`
@@ -334,6 +396,13 @@
 - Dirty or obsolete records remain searchable with an explicit stale warning.
 - A later fswatch delta cannot be accidentally erased by an older refresh completion.
 - Tests cover limiter behavior, freshness promotion, and stale-hit surfacing.
+- State transitions are guarded so freshness cannot be promoted on stale source content.
+
+### Miss-prevention checks
+- Do not create separate limiters per backend unless the shared one still governs total concurrency.
+- Do not hide stale status from search results.
+- Do not let a late completion overwrite a newer dirty mark.
+- Do not treat throttling as a generic failure without retry semantics.
 
 ### Implementation surfaces
 - `src/agent_code_analyzer/agents/base.py`
