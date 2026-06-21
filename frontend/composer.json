@@ -1,0 +1,21 @@
+{
+  "name": "ululuth/agent-code-analyzer-frontend",
+  "description": "Basic operator frontend for the Agent Code Analyzer control API",
+  "type": "project",
+  "require": {
+    "php": "^8.4",
+    "slim/slim": "^4.14",
+    "slim/psr7": "^1.7"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\Frontend\\": "src/"
+    }
+  },
+  "scripts": {
+    "lint": [
+      "php -l public/index.php",
+      "find src templates -name '*.php' -print0 | xargs -0 -n1 php -l"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+services:
+  frontend:
+    build:
+      context: .
+    network_mode: host
+    environment:
+      CONTROL_API_BASE_URL: http://127.0.0.1:8010
+      APP_NAME: Introspect
+      APP_ENV: production
+      APP_PORT: "40080"
+    restart: unless-stopped
