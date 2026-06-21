@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +20,7 @@ from .search_filters import normalize_exclusions, should_exclude_result
 from .search_rank import build_embedding_text, tokenize_text
 from .search_scoring import DEFAULT_SEARCH_SCORER
 from .freshness import get_freshness_registry
-from .semantic_agent import SemanticWriteRequest, SemanticWriter, StubSemanticWriter
+from .semantic_agent import SemanticWriteRequest, SemanticWriter, build_semantic_writer
 from .semantic_chunking import build_method_chunk_spans
 from .semantic_descriptions import build_semantic_description_record
 from .vector_payload_factory import (
@@ -35,6 +36,8 @@ QDRANT_DEFAULT_URL = _CONFIG.vector.qdrant_url
 QDRANT_DEFAULT_COLLECTION = _CONFIG.vector.qdrant_collection
 QDRANT_EMBEDDING_MODEL = _CONFIG.vector.embedding_model
 QDRANT_NAMESPACE = uuid.UUID("8d02b10d-0d18-4b93-b3d9-4ff9c1c44c7d")
+
+logger = logging.getLogger(__name__)
 
 
 def _slug_component(value: str) -> str:
@@ -123,7 +126,15 @@ class QdrantVectorIndex:
         if self.embedding_provider is None:
             self.embedding_provider = get_embedding_provider()
         if self.semantic_writer is None:
-            self.semantic_writer = StubSemanticWriter()
+            self.semantic_writer = build_semantic_writer()
+        logger.info(
+            "vector_index_initialized url=%s collection=%s embedding_model=%s embedding_provider=%s semantic_writer=%s",
+            self.url,
+            self.collection_name,
+            self.embedding_model,
+            type(self.embedding_provider).__name__ if self.embedding_provider is not None else None,
+            type(self.semantic_writer).__name__ if self.semantic_writer is not None else None,
+        )
 
     def _freshness_key(self, payload: dict[str, Any]) -> str:
         return str(payload.get("sqlite_uri") or payload.get("project_name") or payload.get("project") or "")
@@ -290,6 +301,15 @@ class QdrantVectorIndex:
         )
         writer = self.semantic_writer
         assert writer is not None
+        logger.debug(
+            "vector_index_semantic_write project=%s scope_type=%s file_path=%s symbol_path=%s parent_scope_id=%s source_kind=%s",
+            project,
+            scope_type,
+            file_path,
+            symbol_path,
+            parent_scope_id,
+            source_kind,
+        )
         return writer.write(request)
 
     def _build_chunk_points(
@@ -832,6 +852,15 @@ class QdrantVectorIndex:
     ) -> dict[str, Any]:
         project_root_text = str(Path(project_root).resolve())
         sqlite_file_uri = factory_sqlite_file_uri(project, file_id)
+        logger.info(
+            "vector_index_sync_analysis project=%s file_id=%d file_path=%s file_size=%d file_mtime_ns=%d sqlite_uri=%s",
+            project,
+            file_id,
+            file_path,
+            file_size,
+            file_mtime_ns,
+            sqlite_file_uri,
+        )
         observed_revision = self._mark_payload_dirty({"sqlite_uri": sqlite_file_uri})
         self.delete_file(sqlite_file_uri)
         points = self._build_points_from_analysis(
@@ -846,6 +875,13 @@ class QdrantVectorIndex:
         )
         upserted = self._upsert_points(points)
         self._promote_payload_fresh({"sqlite_uri": sqlite_file_uri}, observed_revision=observed_revision)
+        logger.info(
+            "vector_index_sync_complete project=%s file_id=%d sqlite_uri=%s points=%d",
+            project,
+            file_id,
+            sqlite_file_uri,
+            upserted,
+        )
         return {
             "synced": True,
             "project": project,
@@ -930,6 +966,13 @@ class QdrantVectorIndex:
         if limit < 1:
             raise ValueError("limit must be at least 1")
 
+        logger.info(
+            "vector_index_search query=%r project=%r scope_type=%r limit=%d",
+            needle,
+            project,
+            scope_type,
+            limit,
+        )
         self.ensure_collection()
         conditions: list[qmodels.FieldCondition] = []
         if project:

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, ClassVar, Mapping, Protocol
 
-from .agents.base import Agent, AgentCaller, ResponseFormat
+from .agents.base import Agent, AgentCaller, ResponseFormat, _preview_text, build_agent
+from .config import AnalyzerConfig, get_config
 from .semantic_descriptions import SemanticDescriptionRecord
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +125,13 @@ class AgentSemanticWriter:
 
     def write(self, request: SemanticWriteRequest) -> SemanticWriteResult:
         prompt = self._build_prompt(request)
+        logger.info(
+            "semantic_write_dispatch scope_type=%s file_path=%s backend_prompt_length=%d output_hint=%s",
+            request.record.scope_type,
+            request.record.file_path,
+            len(prompt),
+            request.output_hint,
+        )
         try:
             response = self._caller.call(
                 prompt,
@@ -129,22 +140,90 @@ class AgentSemanticWriter:
                 response_format=self.response_format,
             )
         except Exception as exc:  # pragma: no cover - exercised through adapter failure tests
+            logger.warning(
+                "semantic_write_failed scope_type=%s file_path=%s error=%s prompt_preview=%s",
+                request.record.scope_type,
+                request.record.file_path,
+                exc,
+                _preview_text(prompt),
+            )
             raise SemanticTransportError(str(exc)) from exc
 
         content = response.content.strip()
         if not content:
+            logger.info(
+                "semantic_write_empty scope_type=%s file_path=%s backend=%s",
+                request.record.scope_type,
+                request.record.file_path,
+                response.agent_kind,
+            )
             return SemanticWriteResult(
                 request=request,
                 response=NO_SEMANTIC_DESCRIPTION,
                 backend=response.agent_kind,
                 metadata={"mode": "agent", **dict(request.metadata)},
             )
+        logger.info(
+            "semantic_write_complete scope_type=%s file_path=%s backend=%s response_length=%d",
+            request.record.scope_type,
+            request.record.file_path,
+            response.agent_kind,
+            len(content),
+        )
         return SemanticWriteResult(
             request=request,
             response=content,
             backend=response.agent_kind,
             metadata={"mode": "agent", **dict(request.metadata)},
         )
+
+
+def build_semantic_writer(config: AnalyzerConfig | None = None) -> SemanticWriter:
+    """Build the configured semantic writer backend.
+
+    Defaults to the deterministic FakeAgent backend.
+    """
+
+    resolved = config or get_config()
+    semantic = resolved.semantic
+    backend = semantic.backend.strip().lower() or "fake"
+    logger.info(
+        "semantic_writer_backend_selected backend=%s model=%r provider=%r base_url=%r hermes_repo_root=%r",
+        backend,
+        semantic.model,
+        semantic.provider,
+        semantic.base_url,
+        semantic.hermes_repo_root,
+    )
+    if backend == "stub":
+        return StubSemanticWriter()
+    if backend == "fake":
+        return AgentSemanticWriter(build_agent("fake"), response_format="text")
+    if backend == "hermes-shell":
+        return AgentSemanticWriter(
+            build_agent(
+                "hermes-shell",
+                hermes_executable=semantic.hermes_executable,
+                model=semantic.model,
+                provider=semantic.provider,
+                source="agent-code-analyzer-semantic",
+            ),
+            response_format="text",
+        )
+    if backend == "hermes-lib":
+        return AgentSemanticWriter(
+            build_agent(
+                "hermes-lib",
+                hermes_repo_root=semantic.hermes_repo_root,
+                model=semantic.model,
+                provider=semantic.provider,
+                base_url=semantic.base_url,
+                api_key=semantic.api_key,
+                source="agent-code-analyzer-semantic",
+            ),
+            response_format="text",
+        )
+    raise SemanticWriterError(f"Unknown semantic backend: {semantic.backend}")
 
 
 def is_no_semantic_description(value: Any) -> bool:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -10,8 +11,10 @@ from pathlib import Path
 from typing import Any, ClassVar, Iterator
 
 from ..rate_limit import RateLimitError
-from .base import AgentKind, AgentRequest, AgentResponse, BaseAgent
+from .base import AgentKind, AgentRequest, AgentResponse, BaseAgent, _preview_text
 from ..rate_limit import normalized_rate_limit_signal
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -74,15 +77,33 @@ class HermesShellAgent(BaseAgent):
     def complete(self, request: AgentRequest) -> AgentResponse:
         with self._rate_limit_context():
             command = self._build_command(request)
+            logger.info(
+                "hermes_shell_request prompt_length=%d response_format=%s command=%s",
+                len(request.prompt),
+                request.response_format,
+                command[:6] + ["<prompt>"] if len(command) >= 7 else command,
+            )
             completed = subprocess.run(command, capture_output=True, text=True, check=False)
             if completed.returncode != 0:
-                signal = normalized_rate_limit_signal(RuntimeError(completed.stderr.strip()), backend="shell")
+                stderr_text = completed.stderr.strip()
+                logger.warning(
+                    "hermes_shell_failure returncode=%d stderr_preview=%s",
+                    completed.returncode,
+                    _preview_text(stderr_text),
+                )
+                signal = normalized_rate_limit_signal(RuntimeError(stderr_text), backend="shell")
                 if signal is not None:
                     raise RateLimitError(signal)
                 raise RuntimeError(
-                    f"Hermes shell agent failed with exit code {completed.returncode}: {completed.stderr.strip()}"
+                    f"Hermes shell agent failed with exit code {completed.returncode}: {stderr_text}"
                 )
             content = completed.stdout.strip()
+            logger.info(
+                "hermes_shell_response returncode=%d response_length=%d empty=%s",
+                completed.returncode,
+                len(content),
+                not bool(content),
+            )
             response = AgentResponse(
                 content=content,
                 agent_kind="hermes-shell",
@@ -150,11 +171,22 @@ class HermesLibAgent(BaseAgent):
 
     def complete(self, request: AgentRequest) -> AgentResponse:
         with self._rate_limit_context():
+            logger.info(
+                "hermes_lib_request prompt_length=%d response_format=%s hermes_repo_root=%r",
+                len(request.prompt),
+                request.response_format,
+                self.hermes_repo_root,
+            )
             run_agent = self._load_run_agent()
             hermes_agent = run_agent.AIAgent(**self._build_agent_kwargs())
             try:
                 content = hermes_agent.chat(request.prompt)
             except Exception as exc:
+                logger.warning(
+                    "hermes_lib_failure error=%s prompt_preview=%s",
+                    exc,
+                    _preview_text(request.prompt),
+                )
                 signal = normalized_rate_limit_signal(exc, backend="library")
                 if signal is not None:
                     raise RateLimitError(signal) from exc
@@ -165,6 +197,11 @@ class HermesLibAgent(BaseAgent):
             else:
                 content_text = str(content)
                 parsed = content_text
+            logger.info(
+                "hermes_lib_response response_length=%d parsed_type=%s",
+                len(content_text),
+                type(parsed).__name__,
+            )
             response = AgentResponse(
                 content=content_text,
                 agent_kind="hermes-lib",

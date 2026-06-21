@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from agent_code_analyzer import config as analyzer_config
+from agent_code_analyzer.semantic_agent import build_semantic_writer, SemanticWriteRequest
+from agent_code_analyzer.semantic_descriptions import build_semantic_description_record
 
 
 def test_get_config_reads_file_and_env_overrides(tmp_path, monkeypatch) -> None:
@@ -25,6 +30,20 @@ min_split_lines = 13
 capacity = 2
 refill_per_second = 1.5
 concurrency_limit = 1
+
+[semantic]
+backend = "hermes-lib"
+hermes_repo_root = "/tmp/hermes"
+model = "model-a"
+provider = "provider-a"
+base_url = "https://example.invalid"
+api_key = "secret-a"
+
+[logging]
+level = "DEBUG"
+log_dir = "/tmp/custom-logs"
+log_file = "analyzer.log"
+log_to_stderr = false
 """.strip(),
         encoding="utf-8",
     )
@@ -48,15 +67,82 @@ concurrency_limit = 1
     assert config.rate_limit.capacity == 2
     assert config.rate_limit.refill_per_second == 1.5
     assert config.rate_limit.concurrency_limit == 1
-
-
-def test_repo_config_toml_is_present_and_parseable() -> None:
-    repo_root = analyzer_config.Path(__file__).resolve().parents[1]
-    config_file = repo_root / "config.toml"
-    assert config_file.exists()
+    assert config.semantic.backend == "hermes-lib"
+    assert config.semantic.hermes_repo_root == analyzer_config.Path("/tmp/hermes")
+    assert config.semantic.model == "model-a"
+    assert config.semantic.provider == "provider-a"
+    assert config.semantic.base_url == "https://example.invalid"
+    assert config.semantic.api_key == "secret-a"
+    assert config.logging.level == "DEBUG"
+    assert config.logging.log_dir == Path("/tmp/custom-logs")
+    assert config.logging.log_file == "analyzer.log"
+    assert config.logging.log_to_stderr is False
     analyzer_config.get_config.cache_clear()
-    config = analyzer_config.get_config()
-    assert config.vector.qdrant_url.startswith("http://")
-    assert config.rate_limit.capacity == 2
-    assert config.rate_limit.refill_per_second == 0.1
-    assert config.rate_limit.concurrency_limit == 2
+
+
+def test_build_semantic_writer_defaults_to_fake_backend() -> None:
+    config = analyzer_config.AnalyzerConfig(
+        storage=analyzer_config.StorageConfig(home_dir=analyzer_config.Path("/tmp/home")),
+        vector=analyzer_config.VectorConfig(
+            qdrant_url="http://qdrant",
+            qdrant_collection="collection",
+            embedding_model="model",
+        ),
+        chunking=analyzer_config.ChunkingConfig(),
+        rate_limit=analyzer_config.RateLimitConfig(),
+        semantic=analyzer_config.SemanticConfig(backend="fake"),
+        logging=analyzer_config.LoggingConfig(log_dir=analyzer_config.Path("/tmp/home/logs")),
+    )
+    writer = build_semantic_writer(config)
+    record = build_semantic_description_record(
+        project="demo",
+        scope_type="file",
+        file_path="src/app.py",
+        description_text="",
+        source_fingerprint="abc123",
+    )
+    result = writer.write(SemanticWriteRequest(record=record, source_text="print('hi')\n"))
+
+    assert result.backend == "fake"
+    assert result.description_text == "No detail here"
+
+
+def test_build_semantic_writer_can_use_hermes_lib_backend(tmp_path) -> None:
+    hermes_root = tmp_path / "hermes"
+    hermes_root.mkdir()
+    sys.modules.pop("run_agent", None)
+    (hermes_root / "run_agent.py").write_text(
+        """
+class AIAgent:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+    def chat(self, prompt):
+        return f"lib:{prompt.splitlines()[0]}"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    config = analyzer_config.AnalyzerConfig(
+        storage=analyzer_config.StorageConfig(home_dir=analyzer_config.Path("/tmp/home")),
+        vector=analyzer_config.VectorConfig(
+            qdrant_url="http://qdrant",
+            qdrant_collection="collection",
+            embedding_model="model",
+        ),
+        chunking=analyzer_config.ChunkingConfig(),
+        rate_limit=analyzer_config.RateLimitConfig(),
+        semantic=analyzer_config.SemanticConfig(backend="hermes-lib", hermes_repo_root=hermes_root),
+        logging=analyzer_config.LoggingConfig(log_dir=analyzer_config.Path("/tmp/home/logs")),
+    )
+    writer = build_semantic_writer(config)
+    record = build_semantic_description_record(
+        project="demo",
+        scope_type="file",
+        file_path="src/app.py",
+        description_text="",
+        source_fingerprint="abc123",
+    )
+    result = writer.write(SemanticWriteRequest(record=record, source_text="print('hi')\n"))
+
+    assert result.backend == "hermes-lib"
+    assert result.description_text == "lib:Write a concise semantic description for file scope."

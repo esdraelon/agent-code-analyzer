@@ -36,11 +36,34 @@ class RateLimitConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticConfig:
+    backend: str = "fake"
+    hermes_repo_root: Path | None = None
+    hermes_executable: str = "hermes"
+    model: str | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LoggingConfig:
+    level: str = "INFO"
+    log_dir: Path | None = None
+    log_file: str = "agent-code-analyzer.log"
+    format: str = "%(asctime)s %(levelname)s %(name)s %(message)s"
+    datefmt: str = "%Y-%m-%dT%H:%M:%S%z"
+    log_to_stderr: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class AnalyzerConfig:
     storage: StorageConfig
     vector: VectorConfig
     chunking: ChunkingConfig
     rate_limit: RateLimitConfig
+    semantic: SemanticConfig
+    logging: LoggingConfig
 
 
 _DEFAULT_STORAGE_HOME = Path.home() / ".agent-code-analyzer"
@@ -102,6 +125,8 @@ def get_config() -> AnalyzerConfig:
     vector_raw = raw.get("vector", {}) if isinstance(raw.get("vector", {}), dict) else {}
     chunking_raw = raw.get("chunking", {}) if isinstance(raw.get("chunking", {}), dict) else {}
     rate_limit_raw = raw.get("rate_limit", {}) if isinstance(raw.get("rate_limit", {}), dict) else {}
+    semantic_raw = raw.get("semantic", {}) if isinstance(raw.get("semantic", {}), dict) else {}
+    logging_raw = raw.get("logging", {}) if isinstance(raw.get("logging", {}), dict) else {}
 
     storage_home = _coerce_path(storage_raw.get("home_dir"), _DEFAULT_STORAGE_HOME)
     storage_home = _coerce_path(os.environ.get("AGENT_CODE_ANALYZER_HOME"), storage_home)
@@ -124,6 +149,50 @@ def get_config() -> AnalyzerConfig:
         refill_per_second=_coerce_float(rate_limit_raw.get("refill_per_second"), 8.0),
         concurrency_limit=_coerce_int(rate_limit_raw.get("concurrency_limit"), 4),
     )
+    semantic = SemanticConfig(
+        backend=str(os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_BACKEND", semantic_raw.get("backend", "fake"))),
+        hermes_repo_root=_coerce_path(
+            os.environ.get("AGENT_CODE_ANALYZER_HERMES_REPO_ROOT", semantic_raw.get("hermes_repo_root")),
+            Path.home() / ".hermes" / "hermes-agent",
+        ),
+        hermes_executable=str(
+            os.environ.get("AGENT_CODE_ANALYZER_HERMES_EXECUTABLE", semantic_raw.get("hermes_executable", "hermes"))
+        ),
+        model=(
+            None
+            if semantic_raw.get("model") is None and os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_MODEL") is None
+            else str(os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_MODEL", semantic_raw.get("model")))
+        ),
+        provider=(
+            None
+            if semantic_raw.get("provider") is None and os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_PROVIDER") is None
+            else str(os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_PROVIDER", semantic_raw.get("provider")))
+        ),
+        base_url=(
+            None
+            if semantic_raw.get("base_url") is None and os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_BASE_URL") is None
+            else str(os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_BASE_URL", semantic_raw.get("base_url")))
+        ),
+        api_key=(
+            None
+            if semantic_raw.get("api_key") is None and os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_API_KEY") is None
+            else str(os.environ.get("AGENT_CODE_ANALYZER_SEMANTIC_API_KEY", semantic_raw.get("api_key")))
+        ),
+    )
+    logging = LoggingConfig(
+        level=str(os.environ.get("AGENT_CODE_ANALYZER_LOG_LEVEL", logging_raw.get("level", "INFO"))),
+        log_dir=_coerce_path(
+            os.environ.get("AGENT_CODE_ANALYZER_LOG_DIR", logging_raw.get("log_dir")),
+            storage_home / "logs",
+        ),
+        log_file=str(os.environ.get("AGENT_CODE_ANALYZER_LOG_FILE", logging_raw.get("log_file", "agent-code-analyzer.log"))),
+        format=str(os.environ.get("AGENT_CODE_ANALYZER_LOG_FORMAT", logging_raw.get("format", "%(asctime)s %(levelname)s %(name)s %(message)s"))),
+        datefmt=str(os.environ.get("AGENT_CODE_ANALYZER_LOG_DATEFMT", logging_raw.get("datefmt", "%Y-%m-%dT%H:%M:%S%z"))),
+        log_to_stderr=bool(
+            str(os.environ.get("AGENT_CODE_ANALYZER_LOG_TO_STDERR", logging_raw.get("log_to_stderr", True))).strip().lower()
+            not in {"0", "false", "no", "off"}
+        ),
+    )
     return AnalyzerConfig(
         storage=StorageConfig(
             home_dir=storage_home,
@@ -137,13 +206,17 @@ def get_config() -> AnalyzerConfig:
         ),
         chunking=chunking,
         rate_limit=rate_limit,
+        semantic=semantic,
+        logging=logging,
     )
 
 
 __all__ = [
     "AnalyzerConfig",
     "ChunkingConfig",
+    "LoggingConfig",
     "RateLimitConfig",
+    "SemanticConfig",
     "StorageConfig",
     "VectorConfig",
     "get_config",

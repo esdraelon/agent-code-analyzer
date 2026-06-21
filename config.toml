@@ -36,3 +36,12 @@ min_split_lines = 8
 capacity = 2
 refill_per_second = 0.1
 concurrency_limit = 2
+
+[semantic]
+# Default semantic writer backend. "fake" is deterministic and useful for tests.
+backend = "fake"
+# Switch to Hermes by setting:
+# backend = "hermes-lib"
+# hermes_repo_root = "~/.hermes/hermes-agent"
+# model = "gpt-5.4-mini"
+# provider = "openai-codex"
