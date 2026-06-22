@@ -23,6 +23,8 @@ from .project_service import (
     ingest_project_tree as _ingest_project_tree_impl,
     list_projects as _list_projects_impl,
     project_file_summary as _project_file_summary_impl,
+    project_ingestion_job as _project_ingestion_job_impl,
+    remove_project as _remove_project_impl,
     resolve_project_path as _resolve_project_path_impl,
     search_projects as _search_projects_impl,
     sync_project_tree as _sync_project_tree_impl,
@@ -298,6 +300,16 @@ def _read_file_record(conn: sqlite3.Connection, file_id: int) -> dict[str, Any]:
 def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
     _sync_storage()
     return _project_file_summary_impl(project, file_path)
+
+
+def project_ingestion_job(project: str) -> dict[str, Any] | None:
+    _sync_storage()
+    return _project_ingestion_job_impl(project)
+
+
+def remove_project(project: str) -> dict[str, Any]:
+    _sync_storage()
+    return _remove_project_impl(project)
 
 
 def lexical_search(

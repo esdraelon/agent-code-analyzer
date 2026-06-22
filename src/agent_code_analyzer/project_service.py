@@ -9,6 +9,7 @@ from .ingestion_state import (
     begin_ingestion_checkpoint,
     complete_ingestion_checkpoint,
     fail_ingestion_checkpoint,
+    load_ingestion_checkpoint,
     update_ingestion_checkpoint,
     write_ingestion_checkpoint,
 )
@@ -702,3 +703,51 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
         "symbol_health": analysis["symbol_health"],
         "indexed_at": file_data["indexed_at"],
     }
+
+
+def project_ingestion_job(project: str) -> dict[str, Any] | None:
+    project_data = get_project(project)
+    checkpoint = load_ingestion_checkpoint(Path(project_data["db_path"]), project)
+    if checkpoint is None:
+        return None
+    return {
+        "project": checkpoint.project_name,
+        "job_id": checkpoint.project_name,
+        "action": checkpoint.mode,
+        "phase": checkpoint.phase,
+        "status": checkpoint.status,
+        "queued_at": checkpoint.queued_at,
+        "started_at": checkpoint.started_at,
+        "updated_at": checkpoint.updated_at,
+        "completed_at": checkpoint.completed_at,
+        "total_count": checkpoint.total_file_count,
+        "processed_count": checkpoint.processed_file_count,
+        "last_file_path": checkpoint.last_file_path,
+        "last_file_mtime_ns": checkpoint.last_file_mtime_ns,
+        "last_file_content_hash": checkpoint.last_file_content_hash,
+        "last_error": checkpoint.error_state,
+    }
+
+
+def remove_project(project: str) -> dict[str, Any]:
+    project = storage._normalize_project(project)
+    metadata = _load_project_metadata(project)
+    if metadata is None:
+        return {"project": project, "removed": False, "reason": "not_found"}
+
+    db_path = Path(metadata["db_path"])
+    with storage._acquire_locks(storage.METADATA_DB, db_path):
+        if db_path.exists():
+            with storage._connect(db_path) as conn:
+                storage._ensure_project_schema(conn)
+                sync_steps.clear_project_indexes(conn, project)
+                conn.execute("DELETE FROM ingestion_checkpoints WHERE project_name = ?", (project,))
+                conn.execute("DELETE FROM project_state WHERE project_name = ?", (project,))
+        with storage._connect(storage.METADATA_DB) as conn:
+            ProjectRepository.init_metadata_schema(conn)
+            conn.execute("DELETE FROM projects WHERE name = ?", (project,))
+    try:
+        db_path.unlink()
+    except FileNotFoundError:
+        pass
+    return {"project": project, "removed": True, "db_path": str(db_path)}

@@ -21,6 +21,7 @@ test = ["pytest>=8.0"]
 
 [project.scripts]
 agent-code-analyzer = "agent_code_analyzer.server:main"
+agent-code-analyzer-api = "agent_code_analyzer.control_api:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
