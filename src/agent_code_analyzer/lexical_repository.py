@@ -230,6 +230,7 @@ class LexicalRepository:
         query_terms: list[str],
         project: str | None = None,
         scope_type: str | None = None,
+        directory: str | None = None,
     ) -> list[dict[str, Any]]:
         LexicalRepository.ensure_schema(conn)
         if not query_terms:
@@ -243,6 +244,11 @@ class LexicalRepository:
         if scope_type is not None:
             conditions.append("d.scope_type = ?")
             params.append(scope_type)
+        if directory is not None:
+            normalized_directory = directory.strip().rstrip("/")
+            if normalized_directory:
+                conditions.append("(d.file_path = ? OR d.file_path LIKE ?)")
+                params.extend([normalized_directory, f"{normalized_directory}/%"])
         term_placeholders = ", ".join("?" for _ in query_terms)
         conditions.append(
             f"EXISTS (SELECT 1 FROM lexical_terms t WHERE t.doc_id = d.id AND t.project_name = d.project_name AND t.term IN ({term_placeholders}))"

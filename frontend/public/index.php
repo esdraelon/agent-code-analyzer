@@ -41,6 +41,7 @@ $app->post('/projects/create', [$projectController, 'create']);
 $app->get('/projects/{project}', [$projectController, 'show']);
 $app->post('/projects/{project}/reingest', [$projectController, 'reingest']);
 $app->post('/projects/{project}/offboard', [$projectController, 'delete']);
+$app->get('/api/projects/{project}/paths', [$projectController, 'paths']);
 $app->get('/search', [$searchController, 'index']);
 $app->get('/source', [$sourceController, 'show']);
 $app->get('/logs', [$logController, 'index']);

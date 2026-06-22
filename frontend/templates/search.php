@@ -3,11 +3,13 @@
 /** @var string $project */
 /** @var string $query */
 /** @var string $filePath */
+/** @var string $directory */
 /** @var string $scopeType */
 /** @var int $limit */
 /** @var array<int,array<string,mixed>> $results */
 /** @var array<int,array<string,mixed>> $projects */
 /** @var string $error */
+/** @var string $apiBaseUrl */
 ?>
 <section class="card hero">
     <div class="eyebrow">Search</div>
@@ -16,11 +18,11 @@
 </section>
 
 <section class="card" style="margin-top:18px;">
-    <form method="get" action="/search">
+    <form method="get" action="/search" id="search-form">
         <div class="form-row">
             <div>
                 <label>Mode</label>
-                <select name="mode">
+                <select name="mode" id="search-mode">
                     <?php foreach (['unified', 'lexical', 'semantic', 'tree-sitter', 'ast'] as $option) : ?>
                         <option value="<?= $escape($option) ?>" <?= $mode === $option ? 'selected' : '' ?>><?= $escape($option) ?></option>
                     <?php endforeach; ?>
@@ -28,7 +30,7 @@
             </div>
             <div>
                 <label>Project</label>
-                <input name="project" list="project-options" value="<?= $escape($project) ?>" placeholder="Start typing a project name">
+                <input name="project" id="search-project" list="project-options" value="<?= $escape($project) ?>" placeholder="Start typing a project name" autocomplete="off">
                 <datalist id="project-options">
                     <?php foreach ($projects as $projectItem) : ?>
                         <?php $name = (string) ($projectItem['name'] ?? ''); ?>
@@ -40,7 +42,7 @@
             </div>
             <div>
                 <label>Query</label>
-                <input name="query" value="<?= $escape($query) ?>" placeholder="Search text">
+                <input name="query" id="search-query" value="<?= $escape($query) ?>" placeholder="Search text">
             </div>
             <div>
                 <label>Limit</label>
@@ -49,14 +51,24 @@
         </div>
         <div class="form-row" style="margin-top:12px;">
             <div>
+                <label>Directory</label>
+                <input name="directory" id="search-directory" list="directory-options" value="<?= $escape($directory) ?>" placeholder="Restrict results to this directory" autocomplete="off">
+                <datalist id="directory-options"></datalist>
+            </div>
+            <div>
                 <label>File path</label>
-                <input name="file_path" value="<?= $escape($filePath) ?>" placeholder="Required for tree-sitter / AST">
+                <input name="file_path" id="search-file-path" list="file-path-options" value="<?= $escape($filePath) ?>" placeholder="Required for tree-sitter / AST" autocomplete="off">
+                <datalist id="file-path-options"></datalist>
             </div>
             <div>
                 <label>Scope type</label>
-                <input name="scope_type" value="<?= $escape($scopeType) ?>" placeholder="Optional">
+                <select name="scope_type" id="search-scope-type">
+                    <option value="" <?= $scopeType === '' ? 'selected' : '' ?>>Any</option>
+                    <?php foreach (['file', 'symbol', 'chunk'] as $option) : ?>
+                        <option value="<?= $escape($option) ?>" <?= $scopeType === $option ? 'selected' : '' ?>><?= $escape($option) ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
-            <div></div>
             <div></div>
         </div>
         <div class="actions">
@@ -65,6 +77,73 @@
         </div>
     </form>
 </section>
+
+<script>
+(() => {
+    const projectInput = document.getElementById('search-project');
+    const directoryInput = document.getElementById('search-directory');
+    const filePathInput = document.getElementById('search-file-path');
+    const directoryList = document.getElementById('directory-options');
+    const filePathList = document.getElementById('file-path-options');
+    if (!projectInput || !directoryInput || !filePathInput || !directoryList || !filePathList) {
+        return;
+    }
+
+    const endpoint = '/api/projects/';
+    let timer = null;
+
+    const clearOptions = (list) => {
+        list.replaceChildren();
+    };
+
+    const renderOptions = (list, values) => {
+        list.replaceChildren(...values.map((value) => {
+            const option = document.createElement('option');
+            option.value = value;
+            return option;
+        }));
+    };
+
+    const fetchPaths = async (kind, prefix, list) => {
+        const project = projectInput.value.trim();
+        if (!project) {
+            clearOptions(list);
+            return;
+        }
+        const url = new URL(endpoint + encodeURIComponent(project) + '/paths', window.location.origin);
+        url.searchParams.set('kind', kind);
+        url.searchParams.set('prefix', prefix);
+        url.searchParams.set('limit', '25');
+        try {
+            const response = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
+            if (!response.ok) {
+                clearOptions(list);
+                return;
+            }
+            const payload = await response.json();
+            const values = Array.isArray(payload.paths) ? payload.paths : [];
+            renderOptions(list, values.slice(0, 25));
+        } catch (error) {
+            clearOptions(list);
+        }
+    };
+
+    const refresh = () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => {
+            void fetchPaths('directory', directoryInput.value.trim(), directoryList);
+            void fetchPaths('file', filePathInput.value.trim(), filePathList);
+        }, 180);
+    };
+
+    projectInput.addEventListener('input', refresh);
+    directoryInput.addEventListener('input', refresh);
+    filePathInput.addEventListener('input', refresh);
+    projectInput.addEventListener('change', refresh);
+
+    refresh();
+})();
+</script>
 
 <?php if (!empty($error)) : ?>
     <div class="banner error" style="margin-top:18px;"><?= $escape($error) ?></div>

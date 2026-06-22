@@ -3,6 +3,8 @@ services:
     build:
       context: .
     network_mode: host
+    volumes:
+      - /home/hal9k/projects:/home/hal9k/projects:ro
     environment:
       CONTROL_API_BASE_URL: http://127.0.0.1:8010
       APP_NAME: Introspect

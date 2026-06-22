@@ -956,6 +956,7 @@ class QdrantVectorIndex:
         *,
         project: str | None = None,
         scope_type: str | None = None,
+        directory: str | None = None,
         limit: int = 10,
         exclude_files: list[str] | None = None,
         exclude_symbols: list[str] | None = None,
@@ -967,10 +968,11 @@ class QdrantVectorIndex:
             raise ValueError("limit must be at least 1")
 
         logger.info(
-            "vector_index_search query=%r project=%r scope_type=%r limit=%d",
+            "vector_index_search query=%r project=%r scope_type=%r directory=%r limit=%d",
             needle,
             project,
             scope_type,
+            directory,
             limit,
         )
         self.ensure_collection()
@@ -990,11 +992,14 @@ class QdrantVectorIndex:
                 )
             )
         query_filter = qmodels.Filter(must=conditions) if conditions else None
+        retrieval_limit = limit
+        if directory:
+            retrieval_limit = max(limit * 10, limit)
         response = self.client().query_points(
             collection_name=self.collection_name,
             query=self._embed_query(needle),
             query_filter=query_filter,
-            limit=limit,
+            limit=retrieval_limit,
             with_payload=True,
             with_vectors=False,
         )
@@ -1024,6 +1029,12 @@ class QdrantVectorIndex:
             )
             if should_exclude_result(result, exclude_files=excluded_files, exclude_symbols=excluded_symbols):
                 continue
+            if directory:
+                normalized_directory = directory.strip().rstrip("/")
+                if normalized_directory:
+                    file_path = str(result.get("file_path", ""))
+                    if not (file_path == normalized_directory or file_path.startswith(f"{normalized_directory}/")):
+                        continue
             results.append(result)
         results.sort(
             key=lambda item: (
@@ -1037,6 +1048,7 @@ class QdrantVectorIndex:
             "query": needle,
             "project": project,
             "scope_type": scope_type,
+            "directory": directory,
             "limit": limit,
             "results": results,
         }

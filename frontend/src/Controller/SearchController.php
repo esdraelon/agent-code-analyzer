@@ -16,6 +16,7 @@ final class SearchController extends AbstractController
         $project = trim((string) ($query['project'] ?? ''));
         $searchQuery = trim((string) ($query['query'] ?? ''));
         $filePath = trim((string) ($query['file_path'] ?? ''));
+        $directory = trim((string) ($query['directory'] ?? ''));
         $scopeType = trim((string) ($query['scope_type'] ?? ''));
         $limit = (int) ($query['limit'] ?? 10);
         $results = [];
@@ -44,6 +45,7 @@ final class SearchController extends AbstractController
                     'query' => $searchQuery,
                     'project' => $project !== '' ? $project : null,
                     'scope_type' => $scopeType !== '' ? $scopeType : null,
+                    'directory' => $directory !== '' ? $directory : null,
                     'limit' => $limit,
                 ];
                 $apiQuery = array_filter($apiQuery, static fn (mixed $value): bool => $value !== null && $value !== '');
@@ -60,12 +62,14 @@ final class SearchController extends AbstractController
             'project' => $project,
             'query' => $searchQuery,
             'filePath' => $filePath,
+            'directory' => $directory,
             'scopeType' => $scopeType,
             'limit' => $limit,
             'results' => $results,
             'projects' => $projects,
             'error' => $error,
             'activePage' => 'search',
+            'apiBaseUrl' => $this->api->baseUrl(),
         ]);
     }
 }

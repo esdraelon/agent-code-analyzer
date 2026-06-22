@@ -75,6 +75,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
         *,
         project=None,
         scope_type=None,
+        directory=None,
         limit: int = 10,
         exclude_files=None,
         exclude_symbols=None,
@@ -84,6 +85,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
                 "query": query,
                 "project": project,
                 "scope_type": scope_type,
+                "directory": directory,
                 "limit": limit,
                 "exclude_files": exclude_files,
                 "exclude_symbols": exclude_symbols,
@@ -112,6 +114,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
             *,
             project=None,
             scope_type=None,
+            directory=None,
             limit: int = 10,
             exclude_files=None,
             exclude_symbols=None,
@@ -121,6 +124,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
                     "query": query,
                     "project": project,
                     "scope_type": scope_type,
+                    "directory": directory,
                     "limit": limit,
                     "exclude_files": exclude_files,
                     "exclude_symbols": exclude_symbols,
@@ -154,8 +158,8 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
         exclude_symbols=["world"],
     )
 
-    assert lexical_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 3, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
-    assert semantic_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 3, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
+    assert lexical_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "directory": None, "limit": 3, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
+    assert semantic_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "directory": None, "limit": 3, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
     assert result["lexical"]["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/1"
     assert result["semantic"]["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
     assert [item["sqlite_uri"] for item in result["results"]] == ["sqlite://projects/demo/files/1"]
@@ -236,6 +240,44 @@ def test_lexical_search_respects_file_and_symbol_exclusions(tmp_path: Path, monk
 
     assert file_result["results"] == []
     assert symbol_result["results"] == []
+
+
+def test_lexical_search_filters_by_directory_prefix(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
+
+    root = tmp_path / "demo"
+    (root / "src").mkdir(parents=True)
+    (root / "docs").mkdir(parents=True)
+    src_file = root / "src" / "worker.py"
+    docs_file = root / "docs" / "worker_notes.py"
+    src_file.write_text("class Worker:\n    pass\n", encoding="utf-8")
+    docs_file.write_text("class WorkerNotes:\n    pass\n", encoding="utf-8")
+
+    db_path = storage._project_db_path("demo")
+    with storage._connect(db_path) as conn:
+        storage._ensure_project_schema(conn)
+        from agent_code_analyzer.lexical_index import sync_analysis, search
+
+        for file_id, file_path in enumerate([src_file, docs_file], start=1):
+            analysis = analyze_file(str(file_path))
+            sync_analysis(
+                conn,
+                project="demo",
+                root_path=root,
+                file_id=file_id,
+                file_path=str(file_path),
+                analysis=analysis,
+                indexed_at="2026-06-15T12:00:00Z",
+                file_size=file_path.stat().st_size,
+                file_mtime_ns=file_path.stat().st_mtime_ns,
+            )
+
+        result = search(conn, "worker", project="demo", directory="src", limit=10)
+
+    assert result["directory"] == "src"
+    assert result["results"]
+    assert all(item["file_path"].startswith("src/") for item in result["results"])
+    assert all(item["file_path"] != "docs/worker_notes.py" for item in result["results"])
 
 
 def test_lexical_search_emits_timing_metrics(tmp_path: Path, monkeypatch, caplog) -> None:

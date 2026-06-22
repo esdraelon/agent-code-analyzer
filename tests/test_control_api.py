@@ -226,7 +226,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
             "results": [
                 {
                     "project_name": "searchable",
-                    "file_path": "lib.py",
+                    "file_path": "orkui/controller/controller.Search.php",
                     "symbol_name": "add",
                     "start_row": 0,
                     "start_column": 0,
@@ -237,7 +237,21 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
                     "scope_type": "symbol",
                     "source_kind": "symbol",
                     "unit_type": "function",
-                }
+                },
+                {
+                    "project_name": "searchable",
+                    "file_path": "system/lib/ork3/class.SearchService.php",
+                    "symbol_name": "search",
+                    "start_row": 0,
+                    "start_column": 0,
+                    "end_row": 1,
+                    "end_column": 0,
+                    "sqlite_uri": "sqlite://projects/searchable/files/2/symbols/0",
+                    "score": 0.35,
+                    "scope_type": "symbol",
+                    "source_kind": "symbol",
+                    "unit_type": "function",
+                },
             ],
         }
 
@@ -251,7 +265,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
             "results": [
                 {
                     "project_name": "searchable",
-                    "file_path": "lib.py",
+                    "file_path": "orkui/controller/controller.Search.php",
                     "symbol_name": "add",
                     "start_row": 0,
                     "start_column": 0,
@@ -262,7 +276,21 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
                     "scope_type": "symbol",
                     "source_kind": "symbol",
                     "unit_type": "function",
-                }
+                },
+                {
+                    "project_name": "searchable",
+                    "file_path": "system/lib/ork3/class.SearchService.php",
+                    "symbol_name": "search",
+                    "start_row": 0,
+                    "start_column": 0,
+                    "end_row": 1,
+                    "end_column": 0,
+                    "sqlite_uri": "sqlite://projects/searchable/files/2/symbols/0",
+                    "score": 0.73,
+                    "scope_type": "symbol",
+                    "source_kind": "symbol",
+                    "unit_type": "function",
+                },
             ],
         }
         return {"query": query, "project": kwargs.get("project"), "scope_type": kwargs.get("scope_type"), "limit": kwargs.get("limit", 10), "lexical": lexical, "semantic": semantic, "results": lexical["results"]}
@@ -275,7 +303,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         assert status == 200
         assert response["ok"] is True
         assert response["results"][0]["index_type"] == "lexical"
-        assert response["results"][0]["source_link"]["href"].startswith("/api/projects/searchable/files/lib.py")
+        assert response["results"][0]["source_link"]["href"].startswith("/api/projects/searchable/files/orkui/controller/controller.Search.php")
         related_hrefs = {link["rel"]: link["href"] for link in response["results"][0]["related_index_links"]}
         assert related_hrefs["source"].startswith("/source?")
         assert related_hrefs["tree-sitter"].startswith("/search?mode=tree-sitter")
@@ -290,6 +318,18 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         assert status == 200
         assert response["results"][0]["index_type"] == "unified"
         assert set(response["results"][0]["backends"]) == {"lexical", "semantic"}
+
+        status, response = request_json(base_url, "GET", "/api/search/semantic?" + urlencode({"query": "add", "project": "searchable", "directory": "orkui"}))
+        assert status == 200
+        assert response["results"]
+        assert all(item["file_path"].startswith("orkui/") for item in response["results"])
+        assert all(not item["file_path"].startswith("system/lib/ork3/") for item in response["results"])
+
+        status, response = request_json(base_url, "GET", "/api/search/unified?" + urlencode({"query": "add", "project": "searchable", "directory": "orkui"}))
+        assert status == 200
+        assert response["results"]
+        assert all(item["file_path"].startswith("orkui/") for item in response["results"])
+        assert all(not item["file_path"].startswith("system/lib/ork3/") for item in response["results"])
 
         status, response = request_json(base_url, "GET", "/api/search/tree-sitter?" + urlencode({"project": "searchable", "file_path": "lib.py"}))
         assert status == 200
