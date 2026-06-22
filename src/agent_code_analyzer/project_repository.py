@@ -4,6 +4,15 @@ import sqlite3
 from pathlib import Path
 
 from . import project_storage as storage
+from .ingestion_state import (
+    begin_ingestion_checkpoint as _begin_ingestion_checkpoint,
+    complete_ingestion_checkpoint as _complete_ingestion_checkpoint,
+    fail_ingestion_checkpoint as _fail_ingestion_checkpoint,
+    load_active_ingestion_checkpoints as _load_active_ingestion_checkpoints,
+    load_ingestion_checkpoint as _load_ingestion_checkpoint,
+    recover_incomplete_ingestion as _recover_incomplete_ingestion,
+    update_ingestion_checkpoint as _update_ingestion_checkpoint,
+)
 from .project_row_mapper import ProjectRowMapper
 
 
@@ -229,3 +238,46 @@ class ProjectRepository:
         record = ProjectRowMapper.file_record(row)
         record["sqlite_file_id"] = file_id
         return record
+
+    @staticmethod
+    def load_ingestion_checkpoint(db_path: Path, project: str):
+        return _load_ingestion_checkpoint(db_path, project)
+
+    @staticmethod
+    def load_active_ingestion_checkpoints(db_path: Path):
+        return _load_active_ingestion_checkpoints(db_path)
+
+    @staticmethod
+    def begin_ingestion_checkpoint(
+        db_path: Path,
+        *,
+        project: str,
+        root_path: Path | str,
+        mode: str,
+        phase: str,
+        total_file_count: int,
+    ):
+        return _begin_ingestion_checkpoint(
+            db_path,
+            project=project,
+            root_path=root_path,
+            mode=mode,
+            phase=phase,
+            total_file_count=total_file_count,
+        )
+
+    @staticmethod
+    def update_ingestion_checkpoint(db_path: Path, *, project: str, **changes):
+        return _update_ingestion_checkpoint(db_path, project=project, **changes)
+
+    @staticmethod
+    def complete_ingestion_checkpoint(db_path: Path, *, project: str, phase: str = "completed"):
+        return _complete_ingestion_checkpoint(db_path, project=project, phase=phase)
+
+    @staticmethod
+    def fail_ingestion_checkpoint(db_path: Path, *, project: str, error_state: str, phase: str = "failed"):
+        return _fail_ingestion_checkpoint(db_path, project=project, error_state=error_state, phase=phase)
+
+    @staticmethod
+    def recover_incomplete_ingestion(project_records=None, sync_callback=None):
+        return _recover_incomplete_ingestion(project_records=project_records, sync_callback=sync_callback)

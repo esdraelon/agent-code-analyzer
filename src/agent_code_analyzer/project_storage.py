@@ -179,6 +179,27 @@ def _init_project_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
         CREATE INDEX IF NOT EXISTS idx_symbols_file_id ON symbols(file_id);
         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+
+        CREATE TABLE IF NOT EXISTS ingestion_checkpoints (
+            project_name TEXT PRIMARY KEY,
+            root_path TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            status TEXT NOT NULL,
+            queued_at TEXT NOT NULL,
+            started_at TEXT,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            last_file_path TEXT,
+            last_file_mtime_ns INTEGER,
+            last_file_content_hash TEXT NOT NULL DEFAULT '',
+            total_file_count INTEGER NOT NULL DEFAULT 0,
+            processed_file_count INTEGER NOT NULL DEFAULT 0,
+            error_state TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ingestion_checkpoints_status ON ingestion_checkpoints(status);
+        CREATE INDEX IF NOT EXISTS idx_ingestion_checkpoints_updated_at ON ingestion_checkpoints(updated_at);
         """
     )
     columns = {row[1] for row in conn.execute("PRAGMA table_info(project_state)").fetchall()}
