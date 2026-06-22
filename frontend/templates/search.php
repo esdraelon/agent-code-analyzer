@@ -6,10 +6,16 @@
 /** @var string $scopeType */
 /** @var int $limit */
 /** @var array<int,array<string,mixed>> $results */
+/** @var array<int,array<string,mixed>> $projects */
 /** @var string $error */
 ?>
-<section class="card">
-    <h2>Search</h2>
+<section class="card hero">
+    <div class="eyebrow">Search</div>
+    <h2 style="margin-bottom:8px;">Structured retrieval across lexical, semantic, and source views</h2>
+    <p class="muted" style="margin:0;">Use query + project filters for ranked retrieval, or file path for tree and AST drill-through.</p>
+</section>
+
+<section class="card" style="margin-top:18px;">
     <form method="get" action="/search">
         <div class="form-row">
             <div>
@@ -22,7 +28,15 @@
             </div>
             <div>
                 <label>Project</label>
-                <input name="project" value="<?= $escape($project) ?>" placeholder="Optional project name">
+                <input name="project" list="project-options" value="<?= $escape($project) ?>" placeholder="Start typing a project name">
+                <datalist id="project-options">
+                    <?php foreach ($projects as $projectItem) : ?>
+                        <?php $name = (string) ($projectItem['name'] ?? ''); ?>
+                        <?php if ($name !== '') : ?>
+                            <option value="<?= $escape($name) ?>"></option>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
+                </datalist>
             </div>
             <div>
                 <label>Query</label>
@@ -57,30 +71,71 @@
 <?php endif; ?>
 
 <section class="card" style="margin-top:18px;">
-    <h3>Results</h3>
+    <div class="topbar" style="margin-bottom:12px;">
+        <h3 style="margin:0;">Results</h3>
+        <span class="pill"><?= $escape(count($results)) ?> hits</span>
+    </div>
     <?php if ($results === []) : ?>
         <p class="muted">Run a query to see search output.</p>
     <?php else : ?>
         <div class="list">
             <?php foreach ($results as $result) : ?>
-                <article class="list-item">
+                <?php
+                $sourceLink = $result['source_link'] ?? [];
+                $sourceProject = (string) ($sourceLink['project'] ?? $result['project'] ?? '');
+                $sourceFile = (string) ($sourceLink['file_path'] ?? $result['file_path'] ?? '');
+                $sourceStart = $sourceLink['start_line'] ?? null;
+                $sourceEnd = $sourceLink['end_line'] ?? null;
+                $sourceSymbol = (string) ($sourceLink['symbol_name'] ?? $result['symbol_name'] ?? '');
+                $viewerHref = '';
+                if ($sourceProject !== '' && $sourceFile !== '') {
+                    $viewerHref = '/source?' . http_build_query(array_filter([
+                        'project' => $sourceProject,
+                        'file_path' => $sourceFile,
+                        'start_line' => $sourceStart,
+                        'end_line' => $sourceEnd,
+                        'symbol_name' => $sourceSymbol !== '' ? $sourceSymbol : null,
+                    ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+                }
+                $rangeLabel = '—';
+                if (is_int($sourceStart) || is_int($sourceEnd)) {
+                    $rangeLabel = trim(sprintf('%s%s', $sourceStart !== null ? (string) $sourceStart : '?', $sourceEnd !== null ? '–' . $sourceEnd : ''));
+                }
+                ?>
+                <article class="list-item result-card">
                     <div class="topbar" style="margin-bottom:0; align-items:flex-start;">
                         <div>
-                            <strong><?= $escape($result['index_type'] ?? '') ?></strong>
-                            <div class="muted"><?= $escape($result['project'] ?? '') ?> / <?= $escape($result['file_path'] ?? '') ?></div>
-                            <?php if (!empty($result['symbol_name'])) : ?>
-                                <div class="muted">Symbol: <?= $escape($result['symbol_name']) ?></div>
+                            <div class="result-title-row">
+                                <strong><?= $escape($result['index_type'] ?? '') ?></strong>
+                                <?php if (array_key_exists('score', $result) && $result['score'] !== null) : ?>
+                                    <span class="pill">Score <?= $escape(number_format((float) $result['score'], 3)) ?></span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="muted mono"><?= $escape(($result['project'] ?? '') . ' / ' . ($result['file_path'] ?? '')) ?></div>
+                            <div class="detail-grid compact" style="margin-top:10px;">
+                                <div><span class="detail-label">Symbol</span><div><?= $escape((string) ($result['symbol_name'] ?? '—')) ?></div></div>
+                                <div><span class="detail-label">Lines</span><div><?= $escape($rangeLabel) ?></div></div>
+                                <div><span class="detail-label">Scope</span><div><?= $escape((string) ($result['scope_type'] ?? '—')) ?></div></div>
+                                <div><span class="detail-label">Unit</span><div><?= $escape((string) ($result['unit_type'] ?? $result['source_kind'] ?? '—')) ?></div></div>
+                                <div><span class="detail-label">Root type</span><div><?= $escape((string) ($result['root_type'] ?? '—')) ?></div></div>
+                                <div><span class="detail-label">Language</span><div><?= $escape((string) ($result['languages'][0] ?? $result['language'] ?? '—')) ?></div></div>
+                            </div>
+                            <?php if (!empty($result['source_link'])) : ?>
+                                <div class="muted" style="margin-top:10px;">
+                                    Source: <?= $escape($sourceProject) ?> / <?= $escape($sourceFile) ?>
+                                    <?php if ($sourceSymbol !== '') : ?>· <?= $escape($sourceSymbol) ?><?php endif; ?>
+                                </div>
                             <?php endif; ?>
                         </div>
-                        <?php if (array_key_exists('score', $result) && $result['score'] !== null) : ?>
-                            <span class="pill">Score <?= $escape(number_format((float) $result['score'], 3)) ?></span>
-                        <?php endif; ?>
                     </div>
-                    <?php if (!empty($result['source_link']['href'])) : ?>
+
+                    <?php if ($viewerHref !== '') : ?>
                         <div class="actions" style="margin-top:12px;">
-                            <a class="button secondary" href="<?= $escape($result['source_link']['href']) ?>">View source</a>
+                            <a class="button secondary" href="<?= $escape($viewerHref) ?>">View source</a>
+                            <a class="button secondary" href="/search?mode=unified&project=<?= rawurlencode($sourceProject) ?>&query=<?= rawurlencode($sourceSymbol !== '' ? $sourceSymbol : $sourceFile) ?>">Search nearby</a>
                         </div>
                     <?php endif; ?>
+
                     <?php if (!empty($result['backends'])) : ?>
                         <div class="pills" style="margin-top:12px;">
                             <?php foreach ((array) $result['backends'] as $backend) : ?>
@@ -88,10 +143,38 @@
                             <?php endforeach; ?>
                         </div>
                     <?php endif; ?>
+
+                    <?php if (!empty($result['related_index_links'])) : ?>
+                        <div class="pills related-links" style="margin-top:12px;">
+                            <?php foreach ((array) $result['related_index_links'] as $link) : ?>
+                                <?php
+                                $rel = (string) ($link['rel'] ?? 'link');
+                                $relatedHref = $link['href'] ?? '#';
+                                if ($rel === 'source') {
+                                    $relatedHref = $viewerHref !== '' ? $viewerHref : $relatedHref;
+                                } elseif (in_array($rel, ['tree-sitter', 'ast'], true)) {
+                                    $relatedHref = '/search?' . http_build_query(array_filter([
+                                        'mode' => $rel,
+                                        'project' => $sourceProject,
+                                        'file_path' => $sourceFile,
+                                    ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+                                } elseif (in_array($rel, ['lexical', 'semantic', 'unified'], true)) {
+                                    $relatedHref = '/search?' . http_build_query(array_filter([
+                                        'mode' => $rel === 'unified' ? 'unified' : $rel,
+                                        'project' => $sourceProject,
+                                        'query' => $sourceSymbol !== '' ? $sourceSymbol : $sourceFile,
+                                    ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+                                }
+                                ?>
+                                <a class="pill" href="<?= $escape((string) $relatedHref) ?>"><?= $escape($rel) ?></a>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
                     <?php if (!empty($result['skeleton'])) : ?>
-                        <div class="code" style="margin-top:12px;"><?= $escape($result['skeleton']) ?></div>
+                        <div class="code tiny" style="margin-top:12px;"><?= $escape((string) $result['skeleton']) ?></div>
                     <?php elseif (!empty($result['symbols'])) : ?>
-                        <div class="code" style="margin-top:12px;"><?= $escape(json_encode($result['symbols'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) ?></div>
+                        <div class="code tiny" style="margin-top:12px;"><?= $escape(json_encode($result['symbols'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) ?></div>
                     <?php endif; ?>
                 </article>
             <?php endforeach; ?>

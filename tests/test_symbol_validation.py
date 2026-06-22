@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_code_analyzer.parsing import _symbol_health_report, analyze_file
+from agent_code_analyzer.parsing import _symbol_health_report, analyze_file, render_ast_svg
 from agent_code_analyzer.projects import add_project, project_file_summary
 from agent_code_analyzer.server import parse_source
 
@@ -54,6 +54,22 @@ def test_analyze_file_exposes_symbol_health_for_duplicate_symbols(tmp_path: Path
     assert any("duplicate symbol name 'alpha'" in issue for issue in health["issues"])
 
 
+def test_render_ast_svg_creates_scalable_diagram() -> None:
+    svg = render_ast_svg(
+        file_path="main.py",
+        language="python",
+        root_type="module",
+        skeleton="[module] main.py\n  [function_definition] hi()\n    [block] return 1",
+        symbol_count=2,
+        node_count=3,
+    )
+
+    assert svg.startswith('<svg xmlns="http://www.w3.org/2000/svg"')
+    assert "Tree-sitter AST" in svg
+    assert "function_definition" in svg
+    assert "main.py" in svg
+
+
 def test_project_summary_and_server_parse_source_surface_symbol_health(
     tmp_path: Path,
     monkeypatch,
@@ -72,6 +88,7 @@ def test_project_summary_and_server_parse_source_surface_symbol_health(
     assert summary["symbol_health"]["healthy"] is True
     assert summary["symbol_health"]["issues"] == []
     assert summary["symbol_health"]["symbol_count"] == 1
+    assert summary["ast_svg"].startswith('<svg xmlns="http://www.w3.org/2000/svg"')
 
     parsed = parse_source("project", "main.py")
     assert parsed["supported"] is True

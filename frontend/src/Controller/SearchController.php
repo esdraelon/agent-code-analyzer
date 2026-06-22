@@ -19,8 +19,16 @@ final class SearchController extends AbstractController
         $scopeType = trim((string) ($query['scope_type'] ?? ''));
         $limit = (int) ($query['limit'] ?? 10);
         $results = [];
+        $projects = [];
         $apiQuery = [];
         $error = '';
+
+        try {
+            $projectsPayload = $this->api->get('/api/projects');
+            $projects = $projectsPayload['data']['projects'] ?? [];
+        } catch (\Throwable $throwable) {
+            $error = $throwable->getMessage();
+        }
 
         try {
             if (in_array($mode, ['tree-sitter', 'ast'], true)) {
@@ -43,7 +51,7 @@ final class SearchController extends AbstractController
                 $results = $payload['data']['results'] ?? [];
             }
         } catch (\Throwable $throwable) {
-            $error = $throwable->getMessage();
+            $error = $error !== '' ? $error . ' · ' . $throwable->getMessage() : $throwable->getMessage();
         }
 
         return $this->html($response, 'search', [
@@ -55,6 +63,7 @@ final class SearchController extends AbstractController
             'scopeType' => $scopeType,
             'limit' => $limit,
             'results' => $results,
+            'projects' => $projects,
             'error' => $error,
             'activePage' => 'search',
         ]);

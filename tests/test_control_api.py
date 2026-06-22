@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,19 @@ class FakeVectorIndex:
         self.sync_calls: list[dict[str, Any]] = []
         self.deleted_projects: list[str] = []
         self.deleted_files: list[str] = []
+        self.collection_name = "fake"
+        self.semantic_counts = {
+            (): 10,
+            (("source_kind", "file"),): 1,
+            (("source_kind", "tree-sitter"),): 2,
+            (("source_kind", "chunk"),): 3,
+            (("source_kind", "symbol"),): 4,
+            (("unit_type", "file"),): 1,
+            (("unit_type", "class"),): 2,
+            (("unit_type", "method"),): 3,
+            (("unit_type", "module"),): 1,
+            (("unit_type", "chunk"),): 3,
+        }
 
     def sync_records(self, **kwargs) -> dict[str, Any]:
         self.sync_calls.append(kwargs)
@@ -28,6 +42,26 @@ class FakeVectorIndex:
 
     def delete_file(self, sqlite_uri: str) -> None:
         self.deleted_files.append(sqlite_uri)
+
+    def client(self):
+        return self
+
+    def collection_exists(self, collection_name: str) -> bool:
+        return True
+
+    def count(self, collection_name: str, count_filter=None, exact: bool = True):
+        filters: list[tuple[str, Any]] = []
+        for condition in getattr(count_filter, "must", []) or []:
+            key = getattr(condition, "key", None)
+            match = getattr(condition, "match", None)
+            value = getattr(match, "value", None)
+            if key is not None:
+                filters.append((key, value))
+        key = tuple(sorted((item for item in filters if item[0] != "project_name")))
+        count = self.semantic_counts.get(key)
+        if count is None:
+            count = self.semantic_counts.get((), 0)
+        return type("CountResult", (), {"count": count})()
 
 
 @contextmanager
@@ -75,7 +109,7 @@ def test_control_api_project_lifecycle_status_and_source_drillthrough(tmp_path: 
 
     root = tmp_path / "project"
     root.mkdir()
-    (root / "app.py").write_text("def hello():\n    return 'ok'\n", encoding="utf-8")
+    (root / "app.py").write_text("class Box:\n    def hello(self):\n        return 'ok'\n", encoding="utf-8")
 
     with run_server() as base_url:
         status, response = request_json(
@@ -101,21 +135,64 @@ def test_control_api_project_lifecycle_status_and_source_drillthrough(tmp_path: 
         assert response["project"]["name"] == "demo"
         assert response["project"]["ingestion_job"]["job_id"] == "demo"
         assert response["project"]["ingestion_job"]["status"] == "completed"
+        summary = response["project"]["index_summary"]
+        assert summary["files"] == 1
+        assert summary["symbols"] >= 1
+        assert summary["hard_total"] >= 1
+        assert summary["soft_total"] == 10
+        hard_symbol_counts = {item["key"]: item["count"] for item in summary["hard"]["symbol_type_counts"]}
+        assert hard_symbol_counts["class"] >= 1
+        assert hard_symbol_counts["method"] >= 1
+        hard_lexical_counts = {item["key"]: item["count"] for item in summary["hard"]["lexical_scope_counts"]}
+        assert hard_lexical_counts["file"] == 1
+        assert hard_lexical_counts["symbol"] >= 1
+        hard_lexical_unit_counts = {item["key"]: item["count"] for item in summary["hard"]["lexical_symbol_unit_counts"]}
+        assert hard_lexical_unit_counts["class"] >= 1
+        assert hard_lexical_unit_counts["method"] >= 1
+        soft_source_counts = {item["key"]: item["count"] for item in summary["soft"]["source_kind_counts"]}
+        assert soft_source_counts["file"] == 1
+        assert soft_source_counts["tree-sitter"] == 2
+        assert soft_source_counts["chunk"] == 3
+        assert soft_source_counts["symbol"] == 4
 
         status, response = request_json(base_url, "GET", "/api/projects/demo/jobs")
         assert status == 200
         assert response["jobs"] and response["jobs"][0]["project"] == "demo"
 
+        original_sync_project_tree = projects.sync_project_tree
+
+        def slow_sync_project_tree(project: str) -> dict[str, Any]:
+            time.sleep(0.5)
+            return original_sync_project_tree(project)
+
+        monkeypatch.setattr(projects, "sync_project_tree", slow_sync_project_tree)
+
+        started = time.monotonic()
         status, response = request_json(base_url, "POST", "/api/projects/demo/reingest", {"mode": "sync"})
+        elapsed = time.monotonic() - started
         assert status == 202
+        assert elapsed < 0.75
         assert response["ok"] is True
         assert response["job"]["project"] == "demo"
+        assert response["job"]["status"] in {"queued", "running"}
+        assert response["result"] is None
+
+        deadline = time.monotonic() + 15
+        while True:
+            status, response = request_json(base_url, "GET", "/api/projects/demo/jobs")
+            assert status == 200
+            job = response["jobs"][0]
+            if job["status"] == "completed":
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
 
         status, response = request_json(base_url, "GET", "/api/projects/demo/files/app.py?start_line=1&end_line=2")
         assert status == 200
         assert response["ok"] is True
         assert response["summary"]["file_path"] == "app.py"
-        assert "def hello()" in response["excerpt"]["content"]
+        assert "class Box" in response["excerpt"]["content"]
+        assert response["summary"]["ast_svg"].startswith('<svg xmlns="http://www.w3.org/2000/svg"')
 
         fake_index.deleted_projects.clear()
         status, response = request_json(base_url, "DELETE", "/api/projects/demo")
@@ -199,7 +276,11 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         assert response["ok"] is True
         assert response["results"][0]["index_type"] == "lexical"
         assert response["results"][0]["source_link"]["href"].startswith("/api/projects/searchable/files/lib.py")
-        assert response["results"][0]["related_index_links"]
+        related_hrefs = {link["rel"]: link["href"] for link in response["results"][0]["related_index_links"]}
+        assert related_hrefs["source"].startswith("/source?")
+        assert related_hrefs["tree-sitter"].startswith("/search?mode=tree-sitter")
+        assert related_hrefs["semantic"].startswith("/search?mode=semantic")
+        assert related_hrefs["ast"].startswith("/search?mode=ast")
 
         status, response = request_json(base_url, "GET", "/api/search/semantic?" + urlencode({"query": "add", "project": "searchable"}))
         assert status == 200
