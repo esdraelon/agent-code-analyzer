@@ -16,7 +16,7 @@ final class Config
     public static function fromEnvironment(): self
     {
         $appName = self::env('APP_NAME', 'Introspect');
-        $apiBaseUrl = rtrim(self::env('CONTROL_API_BASE_URL', 'http://host.docker.internal:8010'), '/');
+        $apiBaseUrl = rtrim(self::env('CONTROL_API_BASE_URL', 'http://127.0.0.1:8010'), '/');
         $debug = self::boolEnv('APP_DEBUG', false);
 
         return new self($appName, $apiBaseUrl, $debug);

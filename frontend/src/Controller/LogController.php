@@ -13,10 +13,17 @@ final class LogController extends AbstractController
     {
         $query = $request->getQueryParams();
         $selectedProject = trim((string) ($query['project'] ?? ''));
-        $projectsPayload = $this->api->get('/api/projects');
-        $projects = $projectsPayload['data']['projects'] ?? [];
+        $projects = [];
+        $projectsError = '';
         $jobs = [];
         $jobsError = '';
+
+        try {
+            $projectsPayload = $this->api->get('/api/projects');
+            $projects = $projectsPayload['data']['projects'] ?? [];
+        } catch (\Throwable $throwable) {
+            $projectsError = $throwable->getMessage();
+        }
 
         try {
             if ($selectedProject !== '') {
@@ -44,7 +51,7 @@ final class LogController extends AbstractController
             'projects' => $projects,
             'selectedProject' => $selectedProject,
             'jobs' => $jobs,
-            'error' => $jobsError ?? '',
+            'error' => trim($projectsError . ($projectsError !== '' && $jobsError !== '' ? ' · ' : '') . $jobsError),
             'message' => (string) ($query['message'] ?? ''),
             'activePage' => 'logs',
         ]);

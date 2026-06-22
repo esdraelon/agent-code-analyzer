@@ -2,6 +2,7 @@
 /** @var array<string,mixed> $project */
 /** @var array<int,array<string,mixed>> $jobs */
 /** @var string $message */
+/** @var string $error */
 ?>
 <?php
 $indexSummary = is_array($project['index_summary'] ?? null) ? $project['index_summary'] : [];
@@ -24,6 +25,9 @@ $renderBreakdown = static function (array $items) use ($escape): void {
 ?>
 <?php if (!empty($message)) : ?>
     <div class="banner"><?= $escape($message) ?></div>
+<?php endif; ?>
+<?php if (!empty($error)) : ?>
+    <div class="banner error"><?= $escape($error) ?></div>
 <?php endif; ?>
 
 <section class="card">

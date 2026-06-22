@@ -1,9 +1,13 @@
 <?php
 /** @var array<int,array<string,mixed>> $projects */
 /** @var string $message */
+/** @var string $error */
 ?>
 <?php if (!empty($message)) : ?>
     <div class="banner"><?= $escape($message) ?></div>
+<?php endif; ?>
+<?php if (!empty($error)) : ?>
+    <div class="banner error"><?= $escape($error) ?></div>
 <?php endif; ?>
 
 <div class="grid two">

@@ -12,12 +12,21 @@ final class ProjectController extends AbstractController
     public function index(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $message = (string) ($request->getQueryParams()['message'] ?? '');
-        $payload = $this->api->get('/api/projects');
+        $projects = [];
+        $error = '';
+
+        try {
+            $payload = $this->api->get('/api/projects');
+            $projects = $payload['data']['projects'] ?? [];
+        } catch (\Throwable $throwable) {
+            $error = $throwable->getMessage();
+        }
 
         return $this->html($response, 'projects', [
             'pageTitle' => 'Projects',
-            'projects' => $payload['data']['projects'] ?? [],
+            'projects' => $projects,
             'message' => $message,
+            'error' => $error,
             'activePage' => 'projects',
         ]);
     }
@@ -25,14 +34,28 @@ final class ProjectController extends AbstractController
     public function show(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $project = (string) ($args['project'] ?? '');
-        $status = $this->api->get('/api/projects/' . rawurlencode($project) . '/status');
-        $jobs = $this->api->get('/api/projects/' . rawurlencode($project) . '/jobs');
+        $status = ['data' => ['project' => ['name' => $project]]];
+        $jobs = ['data' => ['jobs' => []]];
+        $error = '';
+
+        try {
+            $status = $this->api->get('/api/projects/' . rawurlencode($project) . '/status');
+        } catch (\Throwable $throwable) {
+            $error = $throwable->getMessage();
+        }
+
+        try {
+            $jobs = $this->api->get('/api/projects/' . rawurlencode($project) . '/jobs');
+        } catch (\Throwable $throwable) {
+            $error = $error !== '' ? $error . ' · ' . $throwable->getMessage() : $throwable->getMessage();
+        }
 
         return $this->html($response, 'project-detail', [
             'pageTitle' => $project . ' · Project',
             'project' => $status['data']['project'] ?? [],
             'jobs' => $jobs['data']['jobs'] ?? [],
             'message' => (string) ($request->getQueryParams()['message'] ?? ''),
+            'error' => $error,
             'activePage' => 'projects',
         ]);
     }
@@ -49,12 +72,16 @@ final class ProjectController extends AbstractController
             return $this->redirect($response, '/?message=' . rawurlencode('Project name and root path are required.'));
         }
 
-        $this->api->post('/api/projects', [
-            'name' => $project,
-            'root_path' => $rootPath,
-            'mode' => $mode === '' ? 'directory' : $mode,
-            'description' => $description,
-        ]);
+        try {
+            $this->api->post('/api/projects', [
+                'name' => $project,
+                'root_path' => $rootPath,
+                'mode' => $mode === '' ? 'directory' : $mode,
+                'description' => $description,
+            ]);
+        } catch (\Throwable $throwable) {
+            return $this->redirect($response, '/?message=' . rawurlencode($throwable->getMessage()));
+        }
 
         return $this->redirect($response, '/projects/' . rawurlencode($project) . '?message=' . rawurlencode('Project created.'));
     }
@@ -66,10 +93,14 @@ final class ProjectController extends AbstractController
         $mode = trim((string) ($params['mode'] ?? 'refresh'));
         $refresh = !in_array(strtolower((string) ($params['refresh'] ?? 'true')), ['0', 'false', 'no', 'off'], true);
 
-        $this->api->post('/api/projects/' . rawurlencode($project) . '/reingest', [
-            'mode' => $mode,
-            'refresh' => $refresh,
-        ]);
+        try {
+            $this->api->post('/api/projects/' . rawurlencode($project) . '/reingest', [
+                'mode' => $mode,
+                'refresh' => $refresh,
+            ]);
+        } catch (\Throwable $throwable) {
+            return $this->redirect($response, '/projects/' . rawurlencode($project) . '?message=' . rawurlencode($throwable->getMessage()));
+        }
 
         return $this->redirect($response, '/projects/' . rawurlencode($project) . '?message=' . rawurlencode('Reingest queued.'));
     }
@@ -77,7 +108,12 @@ final class ProjectController extends AbstractController
     public function delete(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
     {
         $project = (string) ($args['project'] ?? '');
-        $this->api->delete('/api/projects/' . rawurlencode($project));
+
+        try {
+            $this->api->delete('/api/projects/' . rawurlencode($project));
+        } catch (\Throwable $throwable) {
+            return $this->redirect($response, '/projects?message=' . rawurlencode($throwable->getMessage()));
+        }
 
         return $this->redirect($response, '/projects?message=' . rawurlencode(sprintf('Project %s removed.', $project)));
     }
