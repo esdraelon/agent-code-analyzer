@@ -27,6 +27,18 @@ abstract class AbstractController
     }
 
     /**
+     * @param array<string,mixed>|list<mixed> $data
+     */
+    protected function json(ResponseInterface $response, array $data, int $status = 200): ResponseInterface
+    {
+        $response->getBody()->write(json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+        return $response
+            ->withStatus($status)
+            ->withHeader('Content-Type', 'application/json; charset=utf-8');
+    }
+
+    /**
      * @return array<string,mixed>
      */
     protected function bodyParams(ServerRequestInterface $request): array

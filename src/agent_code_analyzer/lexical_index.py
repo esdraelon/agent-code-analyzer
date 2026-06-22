@@ -97,6 +97,7 @@ def search(
     *,
     project: str | None = None,
     scope_type: str | None = None,
+    directory: str | None = None,
     limit: int = 10,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
@@ -109,6 +110,7 @@ def search(
             "query": query,
             "project": project,
             "scope_type": scope_type,
+            "directory": directory,
             "limit": limit,
             "results": [],
         }
@@ -122,6 +124,7 @@ def search(
         query_terms=query_terms_list,
         project=project,
         scope_type=scope_type,
+        directory=directory,
     )
     candidate_elapsed_ms = (perf_counter() - candidate_started_at) * 1000.0
     scoring_started_at = perf_counter()
@@ -163,6 +166,7 @@ def search(
         "query": query,
         "project": project,
         "scope_type": scope_type,
+        "directory": directory,
         "limit": limit,
         "results": results[:limit],
     }

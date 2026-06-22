@@ -14,6 +14,11 @@ final class ApiClient
     ) {
     }
 
+    public function baseUrl(): string
+    {
+        return $this->config->apiBaseUrl;
+    }
+
     /**
      * @return array{status:int, data:array<string,mixed>, raw:string}
      */

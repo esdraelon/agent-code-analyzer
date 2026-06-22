@@ -313,6 +313,53 @@ def project_ingestion_job(project: str) -> dict[str, Any] | None:
     return _project_ingestion_job_impl(project)
 
 
+def project_paths(project: str, *, kind: str = "all", prefix: str = "", limit: int = 50) -> dict[str, Any]:
+    _sync_storage()
+    project_data = get_project(project)
+    normalized_kind = (kind or "all").strip().lower()
+    normalized_prefix = (prefix or "").strip().replace("\\", "/").rstrip("/")
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    if normalized_kind not in {"all", "file", "directory"}:
+        raise ValueError("kind must be one of: all, file, directory")
+
+    with _storage._connect(Path(project_data["db_path"])) as conn:
+        rows = conn.execute("SELECT rel_path FROM files ORDER BY rel_path ASC").fetchall()
+
+    file_paths: list[str] = []
+    directory_paths: list[str] = []
+    directory_seen: set[str] = set()
+    for row in rows:
+        rel_path = str(row[0])
+        if normalized_prefix and not rel_path.startswith(normalized_prefix):
+            continue
+        if normalized_kind in {"all", "file"} and rel_path not in file_paths:
+            file_paths.append(rel_path)
+        if normalized_kind in {"all", "directory"}:
+            parts = Path(rel_path).parents
+            for parent in parts:
+                parent_text = str(parent).replace("\\", "/")
+                if parent_text in {"", "."}:
+                    continue
+                if normalized_prefix and not (parent_text == normalized_prefix or parent_text.startswith(f"{normalized_prefix}/")):
+                    continue
+                if parent_text not in directory_seen:
+                    directory_seen.add(parent_text)
+                    directory_paths.append(parent_text)
+
+    if normalized_kind == "file":
+        return {"project": project, "kind": normalized_kind, "prefix": normalized_prefix, "paths": file_paths[:limit]}
+    if normalized_kind == "directory":
+        return {"project": project, "kind": normalized_kind, "prefix": normalized_prefix, "paths": directory_paths[:limit]}
+    return {
+        "project": project,
+        "kind": normalized_kind,
+        "prefix": normalized_prefix,
+        "file_paths": file_paths[:limit],
+        "directory_paths": directory_paths[:limit],
+    }
+
+
 def remove_project(project: str) -> dict[str, Any]:
     _sync_storage()
     return _remove_project_impl(project)
@@ -323,6 +370,7 @@ def lexical_search(
     *,
     project: str | None = None,
     scope_type: str | None = None,
+    directory: str | None = None,
     limit: int = 10,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
@@ -338,6 +386,7 @@ def lexical_search(
                 query,
                 project=project,
                 scope_type=scope_type,
+                directory=directory,
                 limit=limit,
                 exclude_files=exclude_files,
                 exclude_symbols=exclude_symbols,
@@ -357,6 +406,7 @@ def lexical_search(
                 query,
                 project=project_record["name"],
                 scope_type=scope_type,
+                directory=directory,
                 limit=limit,
                 exclude_files=exclude_files,
                 exclude_symbols=exclude_symbols,
@@ -375,7 +425,7 @@ def lexical_search(
             item.get("file_path", ""),
         )
     )
-    return {"query": query, "project": None, "scope_type": scope_type, "limit": limit, "results": results[:limit]}
+    return {"query": query, "project": None, "scope_type": scope_type, "directory": directory, "limit": limit, "results": results[:limit]}
 
 
 def _merge_search_results(
@@ -414,6 +464,7 @@ def search_code(
     *,
     project: str | None = None,
     scope_type: str | None = None,
+    directory: str | None = None,
     limit: int = 10,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
@@ -423,6 +474,7 @@ def search_code(
         query,
         project=project,
         scope_type=scope_type,
+        directory=directory,
         limit=limit,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
@@ -431,6 +483,7 @@ def search_code(
         query,
         project=project,
         scope_type=scope_type,
+        directory=directory,
         limit=limit,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
@@ -448,6 +501,7 @@ def search_code(
         "query": query,
         "project": project,
         "scope_type": scope_type,
+        "directory": directory,
         "limit": limit,
         "lexical": lexical,
         "semantic": semantic,

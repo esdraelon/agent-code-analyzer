@@ -292,6 +292,16 @@ def _normalize_search_result(result: dict[str, Any], index_type: str) -> dict[st
     return envelope.to_dict()
 
 
+def _result_within_directory(result: dict[str, Any], directory: str | None) -> bool:
+    if directory is None:
+        return True
+    normalized_directory = directory.strip().replace("\\", "/").rstrip("/")
+    if normalized_directory == "":
+        return True
+    file_path = str(result.get("file_path", "")).strip().replace("\\", "/").rstrip("/")
+    return file_path == normalized_directory or file_path.startswith(f"{normalized_directory}/")
+
+
 def _normalize_unified_results(result: dict[str, Any]) -> list[dict[str, Any]]:
     lexical = result.get("lexical", {}).get("results", [])
     semantic = result.get("semantic", {}).get("results", [])
@@ -370,26 +380,24 @@ def _handle_projects(handler: BaseHTTPRequestHandler, segments: list[str], query
                     total_file_count=0,
                 )
                 _start_ingestion_thread(project_name, mode, refresh)
-                result = _job_from_project(project_name)
-                if result is None:
-                    result = {
-                        "project": checkpoint.project_name,
-                        "job_id": checkpoint.project_name,
-                        "action": checkpoint.mode,
-                        "phase": checkpoint.phase,
-                        "status": checkpoint.status,
-                        "queued_at": checkpoint.queued_at,
-                        "started_at": checkpoint.started_at,
-                        "updated_at": checkpoint.updated_at,
-                        "completed_at": checkpoint.completed_at,
-                        "total_count": checkpoint.total_file_count,
-                        "processed_count": checkpoint.processed_file_count,
-                        "percent_complete": 0.0,
-                        "last_file_path": checkpoint.last_file_path,
-                        "last_file_mtime_ns": checkpoint.last_file_mtime_ns,
-                        "last_file_content_hash": checkpoint.last_file_content_hash,
-                        "last_error": checkpoint.error_state,
-                    }
+                result = {
+                    "project": checkpoint.project_name,
+                    "job_id": checkpoint.project_name,
+                    "action": checkpoint.mode,
+                    "phase": checkpoint.phase,
+                    "status": checkpoint.status,
+                    "queued_at": checkpoint.queued_at,
+                    "started_at": checkpoint.started_at,
+                    "updated_at": checkpoint.updated_at,
+                    "completed_at": checkpoint.completed_at,
+                    "total_count": checkpoint.total_file_count,
+                    "processed_count": checkpoint.processed_file_count,
+                    "percent_complete": 0.0,
+                    "last_file_path": checkpoint.last_file_path,
+                    "last_file_mtime_ns": checkpoint.last_file_mtime_ns,
+                    "last_file_content_hash": checkpoint.last_file_content_hash,
+                    "last_error": checkpoint.error_state,
+                }
             except Exception as exc:
                 _send_error(handler, HTTPStatus.BAD_REQUEST, str(exc))
                 return
@@ -410,6 +418,18 @@ def _handle_projects(handler: BaseHTTPRequestHandler, segments: list[str], query
                 _send_error(handler, HTTPStatus.NOT_FOUND, str(exc))
                 return
             _send_json(handler, HTTPStatus.OK, {"ok": True, "jobs": [job] if job is not None else []})
+            return
+
+        if len(segments) == 4 and segments[3] == "paths" and handler.command == "GET":
+            kind = _query_value(query, "kind") or "all"
+            prefix = _query_value(query, "prefix") or ""
+            limit = _coerce_int(_query_value(query, "limit"), 50)
+            try:
+                payload = projects.project_paths(project_name, kind=kind, prefix=prefix, limit=limit)
+            except Exception as exc:
+                _send_error(handler, HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            _send_json(handler, HTTPStatus.OK, {"ok": True, **payload})
             return
 
         if len(segments) >= 4 and segments[3] == "files" and handler.command == "GET":
@@ -482,6 +502,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
 
     project = _query_value(query, "project")
     scope_type = _query_value(query, "scope_type")
+    directory = _query_value(query, "directory")
     limit = _coerce_int(_query_value(query, "limit"), 10)
     exclude_files = _query_list(query, "exclude_files")
     exclude_symbols = _query_list(query, "exclude_symbols")
@@ -495,33 +516,52 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             search_query,
             project=project,
             scope_type=scope_type,
+            directory=directory,
             limit=limit,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )
-        results = [_normalize_search_result(item, "lexical") for item in raw.get("results", [])]
+        results = [
+            _normalize_search_result(item, "lexical")
+            for item in raw.get("results", [])
+            if _result_within_directory(item, directory)
+        ]
         payload = {"ok": True, "query": raw, "results": results}
     elif search_type == "semantic":
         raw = projects.search_code(
             search_query,
             project=project,
             scope_type=scope_type,
+            directory=directory,
             limit=limit,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )["semantic"]
-        results = [_normalize_search_result(item, "semantic") for item in raw.get("results", [])]
+        results = [
+            _normalize_search_result(item, "semantic")
+            for item in raw.get("results", [])
+            if _result_within_directory(item, directory)
+        ]
         payload = {"ok": True, "query": raw, "results": results}
     elif search_type == "unified":
         raw = projects.search_code(
             search_query,
             project=project,
             scope_type=scope_type,
+            directory=directory,
             limit=limit,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )
-        payload = {"ok": True, "query": raw, "results": _normalize_unified_results(raw)}
+        payload = {
+            "ok": True,
+            "query": raw,
+            "results": [
+                item
+                for item in _normalize_unified_results(raw)
+                if _result_within_directory(item, directory)
+            ],
+        }
     else:
         _send_error(handler, HTTPStatus.NOT_FOUND, "Unknown search route")
         return
