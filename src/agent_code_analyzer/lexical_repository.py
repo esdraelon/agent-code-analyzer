@@ -68,6 +68,12 @@ class LexicalRepository:
     """Repository-style helpers for sqlite-backed lexical persistence."""
 
     @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
     def ensure_schema(conn: sqlite3.Connection) -> None:
         conn.executescript(
             """
@@ -109,6 +115,18 @@ class LexicalRepository:
                 ON lexical_terms(project_name, term, doc_id);
             """
         )
+        for column, definition in [
+            ("root_type", "TEXT NOT NULL DEFAULT ''"),
+            ("start_row", "INTEGER NOT NULL DEFAULT 0"),
+            ("start_column", "INTEGER NOT NULL DEFAULT 0"),
+            ("end_row", "INTEGER NOT NULL DEFAULT 0"),
+            ("end_column", "INTEGER NOT NULL DEFAULT 0"),
+            ("content_text", "TEXT NOT NULL DEFAULT ''"),
+            ("searchable_text", "TEXT NOT NULL DEFAULT ''"),
+            ("indexed_at", "TEXT NOT NULL DEFAULT ''"),
+            ("symbol_order", "INTEGER"),
+        ]:
+            LexicalRepository._ensure_column(conn, "lexical_documents", column, definition)
 
     @staticmethod
     def delete_project(conn: sqlite3.Connection, project: str) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -436,6 +437,97 @@ def analyze_file(file_path: str) -> dict[str, Any]:
             has_error=bool(parsed.tree.root_node.has_error),
         ),
     }
+
+
+def render_ast_svg(
+    *,
+    file_path: str,
+    language: str,
+    root_type: str,
+    skeleton: str,
+    symbol_count: int = 0,
+    node_count: int | None = None,
+) -> str:
+    lines = [line.rstrip() for line in skeleton.splitlines() if line.strip()]
+    if not lines:
+        fallback_name = Path(file_path).name or file_path or "root"
+        lines = [f"[{root_type or 'root'}] {fallback_name}"]
+
+    parsed_lines: list[tuple[int, str, str]] = []
+    for raw_line in lines[:22]:
+        match = re.match(r"^(?P<indent>\s*)\[(?P<type>[^\]]+)\]\s*(?P<label>.*)$", raw_line)
+        if match is None:
+            parsed_lines.append((0, "node", raw_line.strip()))
+            continue
+        depth = len(match.group("indent")) // 2
+        node_type = match.group("type").strip() or "node"
+        label = match.group("label").strip() or node_type
+        parsed_lines.append((depth, node_type, label))
+
+    max_depth = max((depth for depth, _, _ in parsed_lines), default=0)
+    longest_label = max((len(f"[{node_type}] {label}") for _, node_type, label in parsed_lines), default=24)
+    width = max(860, min(1600, int(260 + (max_depth + 1) * 44 + longest_label * 7.4)))
+    row_height = 54
+    header_height = 92
+    footer_height = 34
+    margin = 24
+    height = header_height + len(parsed_lines) * row_height + footer_height + margin
+
+    def esc(value: str) -> str:
+        return html.escape(value, quote=True)
+
+    parts: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" aria-label="Tree-sitter AST for {esc(file_path)}">',
+        "<defs>",
+        '<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">',
+        '<stop offset="0%" stop-color="#f8fbff"/>',
+        '<stop offset="100%" stop-color="#edf2ff"/>',
+        "</linearGradient>",
+        '<linearGradient id="nodeFill" x1="0" y1="0" x2="0" y2="1">',
+        '<stop offset="0%" stop-color="#ffffff"/>',
+        '<stop offset="100%" stop-color="#eef2ff"/>',
+        "</linearGradient>",
+        "</defs>",
+        f'<rect x="0" y="0" width="{width}" height="{height}" rx="24" fill="url(#bg)"/>',
+        f'<text x="28" y="36" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700" fill="#1d2433">Tree-sitter AST</text>',
+        f'<text x="28" y="58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12" fill="#667085">{esc(language or "unknown")} · root: {esc(root_type or "unknown")} · symbols: {symbol_count} · nodes: {node_count if node_count is not None else len(parsed_lines)}</text>',
+        f'<text x="28" y="78" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12" fill="#667085">{esc(file_path)}</text>',
+    ]
+
+    last_at_depth: dict[int, tuple[float, float, float, float]] = {}
+    for index, (depth, node_type, label) in enumerate(parsed_lines):
+        x = float(margin + depth * 42)
+        y = float(header_height + index * row_height)
+        node_label = f"[{node_type}] {label}"
+        box_width = min(width - int(x) - margin, max(280, int(320 + min(len(node_label), 90) * 6.2)))
+        box_height = 34
+        if depth > 0 and (depth - 1) in last_at_depth:
+            parent_x, parent_y, parent_w, parent_h = last_at_depth[depth - 1]
+            child_center_x = x + box_width / 2
+            parent_center_x = parent_x + parent_w / 2
+            parts.append(
+                f'<path d="M {parent_center_x:.1f} {parent_y + parent_h:.1f} C {parent_center_x:.1f} {parent_y + parent_h + 10:.1f}, {child_center_x:.1f} {y - 12:.1f}, {child_center_x:.1f} {y:.1f}" stroke="#9aa7c7" stroke-width="1.6" fill="none" stroke-linecap="round"/>'
+            )
+        parts.extend(
+            [
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{box_width}" height="{box_height}" rx="12" fill="url(#nodeFill)" stroke="#c9d4f5"/>',
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{max(92, min(box_width, 180))}" height="{box_height}" rx="12" fill="#e8eeff" opacity="0.85"/>',
+                f'<text x="{x + 12:.1f}" y="{y + 14:.1f}" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="11" font-weight="700" fill="#3244a6">{esc(node_type)}</text>',
+                f'<text x="{x + 12:.1f}" y="{y + 28:.1f}" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12" fill="#1d2433">{esc(label[:96] + ("…" if len(label) > 96 else ""))}</text>',
+            ]
+        )
+        last_at_depth[depth] = (x, y, float(box_width), float(box_height))
+        for key in list(last_at_depth):
+            if key > depth:
+                del last_at_depth[key]
+
+    parts.extend(
+        [
+            f'<text x="28" y="{height - 12}" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12" fill="#667085">Rendered from Tree-sitter parse data</text>',
+            "</svg>",
+        ]
+    )
+    return "".join(parts)
 
 
 def ast_skeleton(file_path: str) -> str:

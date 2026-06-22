@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ from .ingestion_state import (
     update_ingestion_checkpoint,
     write_ingestion_checkpoint,
 )
-from .parsing import analyze_file, detect_language
+from .parsing import analyze_file, detect_language, render_ast_svg
 from .project_repository import ProjectRepository
 from .project_row_mapper import ProjectRowMapper
 from . import project_sync_steps as sync_steps
@@ -699,6 +700,14 @@ def project_file_summary(project: str, file_path: str) -> dict[str, Any]:
         "has_error": file_data["has_error"],
         "byte_length": file_data["byte_length"],
         "skeleton": file_data["skeleton"],
+        "ast_svg": render_ast_svg(
+            file_path=file_data["path"],
+            language=file_data["language"],
+            root_type=file_data["root_type"],
+            skeleton=file_data["skeleton"],
+            symbol_count=len(symbols),
+            node_count=file_data["node_count"],
+        ),
         "symbols": symbols,
         "symbol_health": analysis["symbol_health"],
         "indexed_at": file_data["indexed_at"],
@@ -726,6 +735,124 @@ def project_ingestion_job(project: str) -> dict[str, Any] | None:
         "last_file_mtime_ns": checkpoint.last_file_mtime_ns,
         "last_file_content_hash": checkpoint.last_file_content_hash,
         "last_error": checkpoint.error_state,
+    }
+
+
+def _normalize_entry_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return "other"
+    if "class" in normalized or "enum" in normalized or "struct" in normalized or "interface" in normalized:
+        return "class"
+    if "function" in normalized or "method" in normalized:
+        return "method"
+    if "module" in normalized or "package" in normalized:
+        return "module"
+    if "file" in normalized:
+        return "file"
+    if "chunk" in normalized:
+        return "chunk"
+    if "symbol" in normalized:
+        return "symbol"
+    return "other"
+
+
+def _label_for_entry_type(value: str) -> str:
+    return {
+        "class": "Classes",
+        "method": "Methods",
+        "module": "Modules",
+        "file": "Files",
+        "chunk": "Chunks",
+        "symbol": "Symbols",
+        "tree-sitter": "Tree-sitter",
+        "lexical": "Lexical",
+        "semantic": "Semantic",
+        "other": "Other",
+    }.get(value, value.replace("_", " ").title())
+
+
+def _count_qdrant_points(project: str, filters: dict[str, str] | None = None) -> int:
+    try:
+        from qdrant_client import models as qmodels
+
+        from .vector_index import get_vector_index
+
+        vector_index = get_vector_index()
+        client = vector_index.client()
+        if not client.collection_exists(vector_index.collection_name):
+            return 0
+        must = [qmodels.FieldCondition(key="project_name", match=qmodels.MatchValue(value=project))]
+        for key, value in (filters or {}).items():
+            must.append(qmodels.FieldCondition(key=key, match=qmodels.MatchValue(value=value)))
+        result = client.count(
+            collection_name=vector_index.collection_name,
+            count_filter=qmodels.Filter(must=must),  # type: ignore[arg-type]
+            exact=True,
+        )
+        return int(getattr(result, "count", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _counter_items(counter: Counter[str]) -> list[dict[str, Any]]:
+    return [
+        {"key": key, "label": _label_for_entry_type(key), "count": int(count)}
+        for key, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def project_index_summary(project: str) -> dict[str, Any]:
+    project_data = get_project(project)
+    db_path = Path(project_data["db_path"])
+
+    file_count = int(project_data.get("file_count", 0))
+    symbol_total = int(project_data.get("symbol_count", 0))
+    hard_total = file_count + symbol_total
+
+    with storage._db_lock(db_path):
+        with storage._connect(db_path) as conn:
+            storage._ensure_project_schema(conn)
+            symbol_type_counts = Counter(
+                _normalize_entry_type(row["type"])
+                for row in conn.execute(
+                    "SELECT type FROM symbols",
+                ).fetchall()
+            )
+
+    lexical_scope_counts = Counter({"file": file_count, "symbol": symbol_total})
+    lexical_unit_counts = Counter(symbol_type_counts)
+    lexical_total = hard_total
+
+    semantic_total = _count_qdrant_points(project)
+    semantic_source_kinds = ["file", "tree-sitter", "chunk", "symbol"]
+    semantic_unit_types = ["file", "class", "method", "module", "chunk"]
+    semantic_source_counts = Counter({kind: _count_qdrant_points(project, {"source_kind": kind}) for kind in semantic_source_kinds})
+    semantic_unit_counts = Counter({kind: _count_qdrant_points(project, {"unit_type": kind}) for kind in semantic_unit_types})
+    semantic_known_total = sum(semantic_source_counts.values())
+    semantic_other = max(0, semantic_total - semantic_known_total)
+    if semantic_other:
+        semantic_source_counts["other"] = semantic_other
+
+    return {
+        "project": project,
+        "files": int(project_data.get("file_count", 0)),
+        "symbols": int(project_data.get("symbol_count", 0)),
+        "lexical_total": lexical_total,
+        "semantic_total": semantic_total,
+        "hard_total": lexical_total,
+        "soft_total": semantic_total,
+        "hard": {
+            "lexical_total": lexical_total,
+            "lexical_scope_counts": _counter_items(lexical_scope_counts),
+            "lexical_symbol_unit_counts": _counter_items(lexical_unit_counts),
+            "symbol_type_counts": _counter_items(symbol_type_counts),
+        },
+        "soft": {
+            "semantic_total": semantic_total,
+            "source_kind_counts": _counter_items(semantic_source_counts),
+            "unit_type_counts": _counter_items(semantic_unit_counts),
+        },
     }
 
 

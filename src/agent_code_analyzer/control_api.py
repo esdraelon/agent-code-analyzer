@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, urlparse, unquote
+from urllib.parse import parse_qs, quote, urlencode, urlparse, unquote
 
 from . import projects
 from .control_models import IngestionJob, ProjectListItem, SearchResultEnvelope, SourceLink
+from .ingestion_state import begin_ingestion_checkpoint
 
 
 DEFAULT_API_HOST = "127.0.0.1"
 DEFAULT_API_PORT = 8010
+_ACTIVE_INGESTION_THREADS: dict[str, threading.Thread] = {}
+_ACTIVE_INGESTION_THREADS_LOCK = threading.Lock()
+_ACTIVE_JOB_STATUSES = {"queued", "running", "recovering"}
 
 
 def _json_dumps(payload: Any) -> bytes:
@@ -85,6 +90,7 @@ def _project_status(project_name: str) -> dict[str, Any]:
     job_status = job["status"] if job is not None else "idle"
     return {
         **project,
+        "index_summary": projects.project_index_summary(project_name),
         "status": job_status,
         "ingestion_job": job,
     }
@@ -137,6 +143,45 @@ def _job_from_project(project_name: str) -> dict[str, Any] | None:
     return normalized.to_dict()
 
 
+def _active_ingestion_thread(project_name: str) -> threading.Thread | None:
+    with _ACTIVE_INGESTION_THREADS_LOCK:
+        thread = _ACTIVE_INGESTION_THREADS.get(project_name)
+        if thread is not None and not thread.is_alive():
+            _ACTIVE_INGESTION_THREADS.pop(project_name, None)
+            return None
+        return thread
+
+
+def _register_ingestion_thread(project_name: str, thread: threading.Thread) -> None:
+    with _ACTIVE_INGESTION_THREADS_LOCK:
+        _ACTIVE_INGESTION_THREADS[project_name] = thread
+
+
+def _clear_ingestion_thread(project_name: str) -> None:
+    with _ACTIVE_INGESTION_THREADS_LOCK:
+        _ACTIVE_INGESTION_THREADS.pop(project_name, None)
+
+
+def _start_ingestion_thread(project_name: str, mode: str, refresh: bool) -> None:
+    def _worker() -> None:
+        try:
+            if mode in {"sync", "gap", "reconcile"}:
+                projects.sync_project_tree(project_name)
+            else:
+                projects.ingest_project_tree(project_name, refresh=refresh)
+        except Exception as exc:  # pragma: no cover - background safety net
+            try:
+                print(f"ingestion worker failed for {project_name}: {exc}", flush=True)
+            except Exception:
+                pass
+        finally:
+            _clear_ingestion_thread(project_name)
+
+    thread = threading.Thread(target=_worker, name=f"agent-code-analyzer-ingest-{project_name}", daemon=True)
+    _register_ingestion_thread(project_name, thread)
+    thread.start()
+
+
 def _source_link_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
     project = result.get("project_name") or result.get("project")
     file_path = result.get("file_path")
@@ -154,21 +199,63 @@ def _source_link_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
     ).to_dict()
 
 
+def _frontend_source_href(result: dict[str, Any]) -> str | None:
+    project = result.get("project_name") or result.get("project")
+    file_path = result.get("file_path")
+    if not project or not file_path:
+        return None
+
+    query: dict[str, Any] = {
+        "project": str(project),
+        "file_path": str(file_path),
+    }
+    start_row = result.get("start_row")
+    end_row = result.get("end_row")
+    symbol_name = result.get("symbol_name")
+    if isinstance(start_row, int):
+        query["start_line"] = start_row + 1
+    if isinstance(end_row, int):
+        query["end_line"] = end_row + 1
+    if symbol_name:
+        query["symbol_name"] = str(symbol_name)
+    return "/source?" + urlencode(query)
+
+
+def _frontend_search_href(mode: str, result: dict[str, Any]) -> str | None:
+    project = result.get("project_name") or result.get("project")
+    file_path = result.get("file_path")
+    if not project or not file_path:
+        return None
+
+    query: dict[str, Any] = {
+        "mode": mode,
+        "project": str(project),
+    }
+    if mode in {"tree-sitter", "ast"}:
+        query["file_path"] = str(file_path)
+    else:
+        symbol_name = result.get("symbol_name")
+        query["query"] = str(symbol_name) if symbol_name else str(file_path)
+    return "/search?" + urlencode(query)
+
+
 def _related_index_links(result: dict[str, Any], index_type: str) -> list[dict[str, Any]]:
     project = result.get("project_name") or result.get("project")
     file_path = result.get("file_path")
-    symbol_name = result.get("symbol_name")
     links: list[dict[str, Any]] = []
     if not project or not file_path:
         return links
 
-    base = f"/api/projects/{quote(str(project), safe='')}/files/{quote(str(file_path), safe='/')}"
-    if symbol_name:
-        base = f"{base}?symbol_name={quote(str(symbol_name), safe='')}"
-    links.append({"rel": "source", "index_type": index_type, "href": base})
+    source_href = _frontend_source_href(result)
+    if source_href:
+        links.append({"rel": "source", "index_type": index_type, "href": source_href})
+
     for alternate in ("tree-sitter", "lexical", "semantic", "ast"):
-        if alternate != index_type:
-            links.append({"rel": alternate, "href": base, "index_type": alternate})
+        if alternate == index_type:
+            continue
+        href = _frontend_search_href(alternate, result)
+        if href:
+            links.append({"rel": alternate, "href": href, "index_type": alternate})
     return links
 
 
@@ -264,14 +351,49 @@ def _handle_projects(handler: BaseHTTPRequestHandler, segments: list[str], query
             refresh = _coerce_bool(_query_value(query, "refresh"), _coerce_bool(str(payload.get("refresh", "true"))))
             mode = str(payload.get("mode", _query_value(query, "mode", "refresh")) or "refresh").strip().lower()
             try:
-                if mode in {"sync", "gap", "reconcile"}:
-                    result = projects.sync_project_tree(project_name)
-                else:
-                    result = projects.ingest_project_tree(project_name, refresh=refresh)
+                current_job = _job_from_project(project_name)
+            except Exception as exc:
+                _send_error(handler, HTTPStatus.NOT_FOUND, str(exc))
+                return
+            if current_job is not None and current_job.get("status") in _ACTIVE_JOB_STATUSES:
+                _send_json(handler, HTTPStatus.ACCEPTED, {"ok": True, "job": current_job, "result": None})
+                return
+            try:
+                project = projects.get_project(project_name)
+                phase = "gap_sweep" if mode in {"sync", "gap", "reconcile"} else "full_rebuild"
+                checkpoint = begin_ingestion_checkpoint(
+                    Path(project["db_path"]),
+                    project=project_name,
+                    root_path=Path(project["root_path"]),
+                    mode="semantic_refresh" if mode in {"sync", "gap", "reconcile"} else "semantic_rebuild",
+                    phase=phase,
+                    total_file_count=0,
+                )
+                _start_ingestion_thread(project_name, mode, refresh)
+                result = _job_from_project(project_name)
+                if result is None:
+                    result = {
+                        "project": checkpoint.project_name,
+                        "job_id": checkpoint.project_name,
+                        "action": checkpoint.mode,
+                        "phase": checkpoint.phase,
+                        "status": checkpoint.status,
+                        "queued_at": checkpoint.queued_at,
+                        "started_at": checkpoint.started_at,
+                        "updated_at": checkpoint.updated_at,
+                        "completed_at": checkpoint.completed_at,
+                        "total_count": checkpoint.total_file_count,
+                        "processed_count": checkpoint.processed_file_count,
+                        "percent_complete": 0.0,
+                        "last_file_path": checkpoint.last_file_path,
+                        "last_file_mtime_ns": checkpoint.last_file_mtime_ns,
+                        "last_file_content_hash": checkpoint.last_file_content_hash,
+                        "last_error": checkpoint.error_state,
+                    }
             except Exception as exc:
                 _send_error(handler, HTTPStatus.BAD_REQUEST, str(exc))
                 return
-            _send_json(handler, HTTPStatus.ACCEPTED, {"ok": True, "job": _job_from_project(project_name), "result": result})
+            _send_json(handler, HTTPStatus.ACCEPTED, {"ok": True, "job": result, "result": None})
             return
 
         if len(segments) == 4 and segments[3] == "status" and handler.command == "GET":
