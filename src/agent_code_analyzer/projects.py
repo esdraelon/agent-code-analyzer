@@ -365,6 +365,16 @@ def remove_project(project: str) -> dict[str, Any]:
     return _remove_project_impl(project)
 
 
+def _normalize_offset(offset: int) -> int:
+    if offset < 0:
+        raise ValueError("offset must be at least 0")
+    return offset
+
+
+def _page_results(results: list[dict[str, Any]], *, limit: int, offset: int) -> list[dict[str, Any]]:
+    return results[offset : offset + limit]
+
+
 def lexical_search(
     query: str,
     *,
@@ -372,22 +382,26 @@ def lexical_search(
     scope_type: str | None = None,
     directory: str | None = None,
     limit: int = 10,
+    offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     _sync_storage()
+    offset = _normalize_offset(offset)
     excluded_files = normalize_exclusions(exclude_files)
     excluded_symbols = normalize_exclusions(exclude_symbols)
     if project is not None:
         project_data = get_project(project)
         with _storage._connect(Path(project_data["db_path"])) as conn:
+            fetch_limit = limit + offset
             result = _lexical_search_impl(
                 conn,
                 query,
                 project=project,
                 scope_type=scope_type,
                 directory=directory,
-                limit=limit,
+                limit=fetch_limit,
+                offset=0,
                 exclude_files=exclude_files,
                 exclude_symbols=exclude_symbols,
             )
@@ -396,9 +410,13 @@ def lexical_search(
                 for item in result.get("results", [])
                 if not should_exclude_result(item, exclude_files=excluded_files, exclude_symbols=excluded_symbols)
             ]
+            result["limit"] = limit
+            result["offset"] = offset
+            result["results"] = _page_results(result["results"], limit=limit, offset=offset)
             return result
 
     results: list[dict[str, Any]] = []
+    fetch_limit = limit + offset
     for project_record in list_projects():
         with _storage._connect(Path(project_record["db_path"])) as conn:
             search_result = _lexical_search_impl(
@@ -407,7 +425,8 @@ def lexical_search(
                 project=project_record["name"],
                 scope_type=scope_type,
                 directory=directory,
-                limit=limit,
+                limit=fetch_limit,
+                offset=0,
                 exclude_files=exclude_files,
                 exclude_symbols=exclude_symbols,
             )
@@ -425,7 +444,15 @@ def lexical_search(
             item.get("file_path", ""),
         )
     )
-    return {"query": query, "project": None, "scope_type": scope_type, "directory": directory, "limit": limit, "results": results[:limit]}
+    return {
+        "query": query,
+        "project": None,
+        "scope_type": scope_type,
+        "directory": directory,
+        "limit": limit,
+        "offset": offset,
+        "results": _page_results(results, limit=limit, offset=offset),
+    }
 
 
 def _merge_search_results(
@@ -466,16 +493,20 @@ def search_code(
     scope_type: str | None = None,
     directory: str | None = None,
     limit: int = 10,
+    offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     _sync_storage()
+    offset = _normalize_offset(offset)
+    fetch_limit = limit + offset
     lexical = lexical_search(
         query,
         project=project,
         scope_type=scope_type,
         directory=directory,
-        limit=limit,
+        limit=fetch_limit,
+        offset=0,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )
@@ -484,7 +515,8 @@ def search_code(
         project=project,
         scope_type=scope_type,
         directory=directory,
-        limit=limit,
+        limit=fetch_limit,
+        offset=0,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )
@@ -493,7 +525,7 @@ def search_code(
     results = _merge_search_results(
         lexical,
         semantic,
-        limit=limit,
+        limit=fetch_limit,
         exclude_files=excluded_files,
         exclude_symbols=excluded_symbols,
     )
@@ -503,7 +535,8 @@ def search_code(
         "scope_type": scope_type,
         "directory": directory,
         "limit": limit,
+        "offset": offset,
         "lexical": lexical,
         "semantic": semantic,
-        "results": results,
+        "results": _page_results(results, limit=limit, offset=offset),
     }

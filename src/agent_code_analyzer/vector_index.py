@@ -958,6 +958,7 @@ class QdrantVectorIndex:
         scope_type: str | None = None,
         directory: str | None = None,
         limit: int = 10,
+        offset: int = 0,
         exclude_files: list[str] | None = None,
         exclude_symbols: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -968,12 +969,13 @@ class QdrantVectorIndex:
             raise ValueError("limit must be at least 1")
 
         logger.info(
-            "vector_index_search query=%r project=%r scope_type=%r directory=%r limit=%d",
+            "vector_index_search query=%r project=%r scope_type=%r directory=%r limit=%d offset=%d",
             needle,
             project,
             scope_type,
             directory,
             limit,
+            offset,
         )
         self.ensure_collection()
         conditions: list[qmodels.FieldCondition] = []
@@ -992,9 +994,9 @@ class QdrantVectorIndex:
                 )
             )
         query_filter = qmodels.Filter(must=conditions) if conditions else None
-        retrieval_limit = limit
+        retrieval_limit = limit + max(offset, 0)
         if directory:
-            retrieval_limit = max(limit * 10, limit)
+            retrieval_limit = max(retrieval_limit * 10, retrieval_limit)
         response = self.client().query_points(
             collection_name=self.collection_name,
             query=self._embed_query(needle),
@@ -1050,7 +1052,8 @@ class QdrantVectorIndex:
             "scope_type": scope_type,
             "directory": directory,
             "limit": limit,
-            "results": results,
+            "offset": offset,
+            "results": results[offset : offset + limit],
         }
 
     def bootstrap_all_projects(self) -> dict[str, Any]:

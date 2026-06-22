@@ -215,85 +215,108 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
     root = tmp_path / "searchable"
     root.mkdir()
     (root / "lib.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (root / "orkui/controller/controller.Search.php").parent.mkdir(parents=True, exist_ok=True)
+    (root / "orkui/controller/controller.Search.php").write_text("<?php\nclass SearchController {\n    public function add() {\n        return true;\n    }\n}\n", encoding="utf-8")
+    (root / "system/lib/ork3/class.SearchService.php").parent.mkdir(parents=True, exist_ok=True)
+    (root / "system/lib/ork3/class.SearchService.php").write_text("<?php\nclass SearchService {\n    public function search() {\n        return true;\n    }\n}\n", encoding="utf-8")
     projects.add_project("searchable", str(root), mode="directory")
 
     def fake_lexical_search(query: str, **kwargs: Any) -> dict[str, Any]:
+        offset = kwargs.get("offset", 0)
+        limit = kwargs.get("limit", 10)
+        results = [
+            {
+                "project_name": "searchable",
+                "file_path": "orkui/controller/controller.Search.php",
+                "symbol_name": "add",
+                "start_row": 0,
+                "start_column": 0,
+                "end_row": 1,
+                "end_column": 0,
+                "sqlite_uri": "sqlite://projects/searchable/files/1/symbols/0",
+                "score": 0.91,
+                "scope_type": "symbol",
+                "source_kind": "symbol",
+                "unit_type": "function",
+            },
+            {
+                "project_name": "searchable",
+                "file_path": "system/lib/ork3/class.SearchService.php",
+                "symbol_name": "search",
+                "start_row": 0,
+                "start_column": 0,
+                "end_row": 1,
+                "end_column": 0,
+                "sqlite_uri": "sqlite://projects/searchable/files/2/symbols/0",
+                "score": 0.35,
+                "scope_type": "symbol",
+                "source_kind": "symbol",
+                "unit_type": "function",
+            },
+        ]
         return {
             "query": query,
             "project": kwargs.get("project"),
             "scope_type": kwargs.get("scope_type"),
-            "limit": kwargs.get("limit", 10),
-            "results": [
-                {
-                    "project_name": "searchable",
-                    "file_path": "orkui/controller/controller.Search.php",
-                    "symbol_name": "add",
-                    "start_row": 0,
-                    "start_column": 0,
-                    "end_row": 1,
-                    "end_column": 0,
-                    "sqlite_uri": "sqlite://projects/searchable/files/1/symbols/0",
-                    "score": 0.91,
-                    "scope_type": "symbol",
-                    "source_kind": "symbol",
-                    "unit_type": "function",
-                },
-                {
-                    "project_name": "searchable",
-                    "file_path": "system/lib/ork3/class.SearchService.php",
-                    "symbol_name": "search",
-                    "start_row": 0,
-                    "start_column": 0,
-                    "end_row": 1,
-                    "end_column": 0,
-                    "sqlite_uri": "sqlite://projects/searchable/files/2/symbols/0",
-                    "score": 0.35,
-                    "scope_type": "symbol",
-                    "source_kind": "symbol",
-                    "unit_type": "function",
-                },
-            ],
+            "limit": limit,
+            "offset": offset,
+            "results": results[offset : offset + limit],
         }
 
     def fake_search_code(query: str, **kwargs: Any) -> dict[str, Any]:
-        lexical = fake_lexical_search(query, **kwargs)
+        offset = kwargs.get("offset", 0)
+        limit = kwargs.get("limit", 10)
+        fetch_limit = limit + offset
+        lexical = fake_lexical_search(query, **{**kwargs, "limit": fetch_limit, "offset": 0})
+        offset = kwargs.get("offset", 0)
+        semantic_results = [
+            {
+                "project_name": "searchable",
+                "file_path": "orkui/controller/controller.Search.php",
+                "symbol_name": "add",
+                "start_row": 0,
+                "start_column": 0,
+                "end_row": 1,
+                "end_column": 0,
+                "sqlite_uri": "sqlite://projects/searchable/files/1/symbols/0",
+                "score": 0.87,
+                "scope_type": "symbol",
+                "source_kind": "symbol",
+                "unit_type": "function",
+            },
+            {
+                "project_name": "searchable",
+                "file_path": "system/lib/ork3/class.SearchService.php",
+                "symbol_name": "search",
+                "start_row": 0,
+                "start_column": 0,
+                "end_row": 1,
+                "end_column": 0,
+                "sqlite_uri": "sqlite://projects/searchable/files/2/symbols/0",
+                "score": 0.73,
+                "scope_type": "symbol",
+                "source_kind": "symbol",
+                "unit_type": "function",
+            },
+        ]
         semantic = {
             "query": query,
             "project": kwargs.get("project"),
             "scope_type": kwargs.get("scope_type"),
-            "limit": kwargs.get("limit", 10),
-            "results": [
-                {
-                    "project_name": "searchable",
-                    "file_path": "orkui/controller/controller.Search.php",
-                    "symbol_name": "add",
-                    "start_row": 0,
-                    "start_column": 0,
-                    "end_row": 1,
-                    "end_column": 0,
-                    "sqlite_uri": "sqlite://projects/searchable/files/1/symbols/0",
-                    "score": 0.87,
-                    "scope_type": "symbol",
-                    "source_kind": "symbol",
-                    "unit_type": "function",
-                },
-                {
-                    "project_name": "searchable",
-                    "file_path": "system/lib/ork3/class.SearchService.php",
-                    "symbol_name": "search",
-                    "start_row": 0,
-                    "start_column": 0,
-                    "end_row": 1,
-                    "end_column": 0,
-                    "sqlite_uri": "sqlite://projects/searchable/files/2/symbols/0",
-                    "score": 0.73,
-                    "scope_type": "symbol",
-                    "source_kind": "symbol",
-                    "unit_type": "function",
-                },
-            ],
+            "limit": fetch_limit,
+            "offset": 0,
+            "results": semantic_results[:fetch_limit],
         }
-        return {"query": query, "project": kwargs.get("project"), "scope_type": kwargs.get("scope_type"), "limit": kwargs.get("limit", 10), "lexical": lexical, "semantic": semantic, "results": lexical["results"]}
+        return {
+            "query": query,
+            "project": kwargs.get("project"),
+            "scope_type": kwargs.get("scope_type"),
+            "limit": limit,
+            "offset": offset,
+            "lexical": lexical,
+            "semantic": semantic,
+            "results": lexical["results"][offset : offset + limit],
+        }
 
     monkeypatch.setattr(projects, "lexical_search", fake_lexical_search)
     monkeypatch.setattr(projects, "search_code", fake_search_code)
@@ -304,6 +327,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         assert response["ok"] is True
         assert response["results"][0]["index_type"] == "lexical"
         assert response["results"][0]["source_link"]["href"].startswith("/api/projects/searchable/files/orkui/controller/controller.Search.php")
+        assert response["results"][0]["excerpt"]["content"].startswith("1: <?php")
         related_hrefs = {link["rel"]: link["href"] for link in response["results"][0]["related_index_links"]}
         assert related_hrefs["source"].startswith("/source?")
         assert related_hrefs["tree-sitter"].startswith("/search?mode=tree-sitter")
@@ -313,6 +337,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         status, response = request_json(base_url, "GET", "/api/search/semantic?" + urlencode({"query": "add", "project": "searchable"}))
         assert status == 200
         assert response["results"][0]["index_type"] == "semantic"
+        assert response["results"][0]["excerpt"]["content"].startswith("1: <?php")
 
         status, response = request_json(base_url, "GET", "/api/search/unified?" + urlencode({"query": "add", "project": "searchable"}))
         assert status == 200
@@ -330,6 +355,16 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         assert response["results"]
         assert all(item["file_path"].startswith("orkui/") for item in response["results"])
         assert all(not item["file_path"].startswith("system/lib/ork3/") for item in response["results"])
+
+        status, response = request_json(base_url, "GET", "/api/search/unified?" + urlencode({"query": "add", "project": "searchable", "limit": "1", "offset": "1"}))
+        assert status == 200
+        assert len(response["results"]) == 1
+        assert response["results"][0]["file_path"] == "system/lib/ork3/class.SearchService.php"
+
+        status, response = request_json(base_url, "GET", "/api/search/semantic?" + urlencode({"query": "add", "project": "searchable", "limit": "1", "offset": "1"}))
+        assert status == 200
+        assert len(response["results"]) == 1
+        assert response["results"][0]["file_path"] == "system/lib/ork3/class.SearchService.php"
 
         status, response = request_json(base_url, "GET", "/api/search/tree-sitter?" + urlencode({"project": "searchable", "file_path": "lib.py"}))
         assert status == 200

@@ -121,6 +121,7 @@ class SearchResultEnvelope:
     end_column: int | None
     sqlite_uri: str | None
     score: float | None
+    excerpt: dict[str, Any] | None = None
     source_link: SourceLink | None = None
     related_index_links: list[dict[str, Any]] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
@@ -138,6 +139,7 @@ class SearchResultEnvelope:
             "end_column": self.end_column,
             "sqlite_uri": self.sqlite_uri,
             "score": self.score,
+            "excerpt": self.excerpt,
             "source_link": self.source_link.to_dict() if self.source_link is not None else None,
             "related_index_links": list(self.related_index_links),
         }

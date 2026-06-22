@@ -99,6 +99,7 @@ def search(
     scope_type: str | None = None,
     directory: str | None = None,
     limit: int = 10,
+    offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -112,6 +113,7 @@ def search(
             "scope_type": scope_type,
             "directory": directory,
             "limit": limit,
+            "offset": offset,
             "results": [],
         }
 
@@ -168,5 +170,6 @@ def search(
         "scope_type": scope_type,
         "directory": directory,
         "limit": limit,
-        "results": results[:limit],
+        "offset": offset,
+        "results": results[offset : offset + limit],
     }

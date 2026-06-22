@@ -239,6 +239,32 @@ def _frontend_search_href(mode: str, result: dict[str, Any]) -> str | None:
     return "/search?" + urlencode(query)
 
 
+def _search_result_excerpt(result: dict[str, Any], line_count: int = 3) -> dict[str, Any] | None:
+    project = result.get("project_name") or result.get("project")
+    file_path = result.get("file_path")
+    if not project or not file_path:
+        return None
+
+    start_row = result.get("start_row")
+    start_line = (int(start_row) + 1) if isinstance(start_row, int) and start_row >= 0 else 1
+    try:
+        resolved = projects.resolve_project_path(str(project), str(file_path))
+    except Exception:
+        return None
+
+    excerpt = _file_excerpt(resolved, start_line, start_line + max(1, line_count) - 1)
+    if excerpt.strip() == "":
+        return None
+
+    excerpt_lines = excerpt.splitlines()
+    end_line = start_line + max(len(excerpt_lines), 1) - 1
+    return {
+        "start_line": start_line,
+        "end_line": end_line,
+        "content": excerpt,
+    }
+
+
 def _related_index_links(result: dict[str, Any], index_type: str) -> list[dict[str, Any]]:
     project = result.get("project_name") or result.get("project")
     file_path = result.get("file_path")
@@ -282,6 +308,7 @@ def _normalize_search_result(result: dict[str, Any], index_type: str) -> dict[st
         if result.get("project_name") or result.get("project")
         else None,
         related_index_links=_related_index_links(result, index_type),
+        excerpt=_search_result_excerpt(result),
         extra={
             "unit_type": result.get("unit_type"),
             "source_kind": result.get("source_kind"),
@@ -504,6 +531,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
     scope_type = _query_value(query, "scope_type")
     directory = _query_value(query, "directory")
     limit = _coerce_int(_query_value(query, "limit"), 10)
+    offset = _coerce_int(_query_value(query, "offset"), 0)
     exclude_files = _query_list(query, "exclude_files")
     exclude_symbols = _query_list(query, "exclude_symbols")
     search_query = _query_value(query, "query")
@@ -518,6 +546,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             scope_type=scope_type,
             directory=directory,
             limit=limit,
+            offset=offset,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )
@@ -534,12 +563,13 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             scope_type=scope_type,
             directory=directory,
             limit=limit,
+            offset=offset,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )["semantic"]
         results = [
             _normalize_search_result(item, "semantic")
-            for item in raw.get("results", [])
+            for item in raw.get("results", [])[offset : offset + limit]
             if _result_within_directory(item, directory)
         ]
         payload = {"ok": True, "query": raw, "results": results}
@@ -550,6 +580,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             scope_type=scope_type,
             directory=directory,
             limit=limit,
+            offset=offset,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )

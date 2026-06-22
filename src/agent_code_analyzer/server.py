@@ -130,6 +130,7 @@ def semantic_search(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
@@ -139,6 +140,7 @@ def semantic_search(
         project=project,
         scope_type=scope_type,
         limit=limit,
+        offset=offset,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )
@@ -150,6 +152,8 @@ def lexical_search(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    offset: int = 0,
+    directory: str | None = None,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
@@ -159,6 +163,8 @@ def lexical_search(
         project=project,
         scope_type=scope_type,
         limit=limit,
+        offset=offset,
+        directory=directory,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )
@@ -170,6 +176,8 @@ def search_code(
     project: str | None = None,
     scope_type: str | None = None,
     limit: int = 10,
+    offset: int = 0,
+    directory: str | None = None,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
@@ -179,6 +187,8 @@ def search_code(
         project=project,
         scope_type=scope_type,
         limit=limit,
+        offset=offset,
+        directory=directory,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )

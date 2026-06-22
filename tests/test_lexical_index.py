@@ -77,6 +77,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
         scope_type=None,
         directory=None,
         limit: int = 10,
+        offset: int = 0,
         exclude_files=None,
         exclude_symbols=None,
     ) -> dict[str, object]:
@@ -87,6 +88,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
                 "scope_type": scope_type,
                 "directory": directory,
                 "limit": limit,
+                "offset": offset,
                 "exclude_files": exclude_files,
                 "exclude_symbols": exclude_symbols,
             }
@@ -116,6 +118,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
             scope_type=None,
             directory=None,
             limit: int = 10,
+            offset: int = 0,
             exclude_files=None,
             exclude_symbols=None,
         ) -> dict[str, object]:
@@ -126,6 +129,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
                     "scope_type": scope_type,
                     "directory": directory,
                     "limit": limit,
+                    "offset": offset,
                     "exclude_files": exclude_files,
                     "exclude_symbols": exclude_symbols,
                 }
@@ -158,8 +162,8 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
         exclude_symbols=["world"],
     )
 
-    assert lexical_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "directory": None, "limit": 3, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
-    assert semantic_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "directory": None, "limit": 3, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
+    assert lexical_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "directory": None, "limit": 3, "offset": 0, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
+    assert semantic_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "directory": None, "limit": 3, "offset": 0, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
     assert result["lexical"]["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/1"
     assert result["semantic"]["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
     assert [item["sqlite_uri"] for item in result["results"]] == ["sqlite://projects/demo/files/1"]

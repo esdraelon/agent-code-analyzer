@@ -18,7 +18,9 @@ final class SearchController extends AbstractController
         $filePath = trim((string) ($query['file_path'] ?? ''));
         $directory = trim((string) ($query['directory'] ?? ''));
         $scopeType = trim((string) ($query['scope_type'] ?? ''));
-        $limit = (int) ($query['limit'] ?? 10);
+        $pageSize = max(1, min(50, (int) ($query['page_size'] ?? $query['limit'] ?? 10)));
+        $page = max(1, (int) ($query['page'] ?? 1));
+        $offset = ($page - 1) * $pageSize;
         $results = [];
         $projects = [];
         $apiQuery = [];
@@ -46,11 +48,12 @@ final class SearchController extends AbstractController
                     'project' => $project !== '' ? $project : null,
                     'scope_type' => $scopeType !== '' ? $scopeType : null,
                     'directory' => $directory !== '' ? $directory : null,
-                    'limit' => $limit,
+                    'limit' => $pageSize,
+                    'offset' => $offset,
                 ];
                 $apiQuery = array_filter($apiQuery, static fn (mixed $value): bool => $value !== null && $value !== '');
                 $payload = $this->api->get('/api/search/' . rawurlencode($mode), $apiQuery);
-                $results = $payload['data']['results'] ?? [];
+                $results = $this->annotateSearchResults($payload['data']['results'] ?? []);
             }
         } catch (\Throwable $throwable) {
             $error = $error !== '' ? $error . ' · ' . $throwable->getMessage() : $throwable->getMessage();
@@ -64,12 +67,36 @@ final class SearchController extends AbstractController
             'filePath' => $filePath,
             'directory' => $directory,
             'scopeType' => $scopeType,
-            'limit' => $limit,
+            'pageSize' => $pageSize,
+            'page' => $page,
+            'offset' => $offset,
+            'hasPreviousPage' => $page > 1,
+            'hasNextPage' => count($results) >= $pageSize,
             'results' => $results,
             'projects' => $projects,
             'error' => $error,
             'activePage' => 'search',
             'apiBaseUrl' => $this->api->baseUrl(),
         ]);
+    }
+
+    /**
+     * @param array<int, array<string,mixed>> $results
+     * @return array<int, array<string,mixed>>
+     */
+    private function annotateSearchResults(array $results): array
+    {
+        foreach ($results as &$result) {
+            $excerpt = $result['excerpt'] ?? [];
+            if (!is_array($excerpt)) {
+                $excerpt = [];
+            }
+            $filePath = (string) ($result['file_path'] ?? '');
+            $language = (string) ($result['languages'][0] ?? $result['language'] ?? '');
+            $result['excerptRows'] = $this->formatExcerptRows((string) ($excerpt['content'] ?? ''), $language, $filePath);
+        }
+        unset($result);
+
+        return $results;
     }
 }
