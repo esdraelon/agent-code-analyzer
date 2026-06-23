@@ -98,16 +98,25 @@ def _checkpoint_from_db(conn: sqlite3.Connection, project_name: str) -> Ingestio
 
 
 def load_ingestion_checkpoint(db_path: Path, project_name: str) -> IngestionCheckpoint | None:
-    with storage._acquire_locks(db_path):
-        with storage._connect(db_path) as conn:
-            ensure_ingestion_schema(conn)
-            return _checkpoint_from_db(conn, project_name)
+    if not db_path.exists():
+        return None
+
+    with storage._connect(db_path) as conn:
+        try:
+            row = _checkpoint_from_db(conn, project_name)
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return None
+            raise
+    return row
 
 
 def load_active_ingestion_checkpoints(db_path: Path) -> list[IngestionCheckpoint]:
-    with storage._acquire_locks(db_path):
-        with storage._connect(db_path) as conn:
-            ensure_ingestion_schema(conn)
+    if not db_path.exists():
+        return []
+
+    with storage._connect(db_path) as conn:
+        try:
             rows = conn.execute(
                 """
                 SELECT *
@@ -116,7 +125,11 @@ def load_active_ingestion_checkpoints(db_path: Path) -> list[IngestionCheckpoint
                 ORDER BY updated_at ASC, project_name ASC
                 """
             ).fetchall()
-            return [_row_to_checkpoint(row) for row in rows]
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return []
+            raise
+    return [_row_to_checkpoint(row) for row in rows]
 
 
 def _store_checkpoint(db_path: Path, checkpoint: IngestionCheckpoint) -> IngestionCheckpoint:

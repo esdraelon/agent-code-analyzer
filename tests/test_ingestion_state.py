@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +85,62 @@ def test_ingestion_checkpoint_round_trips_through_sqlite(tmp_path: Path, monkeyp
 
     assert load_ingestion_checkpoint(db_path, "demo") is not None
     assert load_active_ingestion_checkpoints(db_path) == []
+
+
+def test_ingestion_checkpoint_reads_do_not_block_on_app_lock(tmp_path: Path, monkeypatch) -> None:
+    _isolate_project_state(tmp_path, monkeypatch)
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "app.py").write_text("def hello():\n    return 'ok'\n", encoding="utf-8")
+
+    added = add_project("demo", str(root), mode="file")
+    db_path = Path(added["db_path"])
+
+    begin_ingestion_checkpoint(
+        db_path,
+        project="demo",
+        root_path=root,
+        mode="semantic_refresh",
+        phase="gap_sweep",
+        total_file_count=1,
+    )
+
+    lock = storage._db_lock(db_path)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_lock() -> None:
+        with lock:
+            entered.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_lock, daemon=True)
+    holder.start()
+    assert entered.wait(1)
+
+    result: dict[str, object] = {}
+
+    def read_checkpoint() -> None:
+        started = time.monotonic()
+        result["value"] = load_ingestion_checkpoint(db_path, "demo")
+        result["elapsed"] = time.monotonic() - started
+
+    reader = threading.Thread(target=read_checkpoint)
+    reader.start()
+    reader.join(timeout=0.5)
+    if reader.is_alive():
+        release.set()
+        reader.join(timeout=5)
+        raise AssertionError("load_ingestion_checkpoint blocked on the application lock")
+
+    release.set()
+    holder.join(timeout=5)
+
+    assert result["value"] is not None
+    elapsed = result.get("elapsed")
+    assert isinstance(elapsed, float)
+    assert elapsed < 0.5
 
 
 def test_loading_missing_checkpoint_returns_none(tmp_path: Path, monkeypatch) -> None:

@@ -13,16 +13,28 @@ final class LogController extends AbstractController
     {
         $query = $request->getQueryParams();
         $selectedProject = trim((string) ($query['project'] ?? ''));
+
+        return $this->html($response, 'logs', [
+            'pageTitle' => 'Jobs',
+            'selectedProject' => $selectedProject,
+            'message' => (string) ($query['message'] ?? ''),
+            'error' => '',
+            'activePage' => 'logs',
+        ]);
+    }
+
+    public function jobsJson(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $query = $request->getQueryParams();
+        $selectedProject = trim((string) ($query['project'] ?? ''));
         $projects = [];
-        $projectsError = '';
         $jobs = [];
-        $jobsError = '';
 
         try {
             $projectsPayload = $this->api->get('/api/projects');
             $projects = $projectsPayload['data']['projects'] ?? [];
         } catch (\Throwable $throwable) {
-            $projectsError = $throwable->getMessage();
+            return $this->json($response, ['ok' => false, 'error' => $throwable->getMessage()], 502);
         }
 
         try {
@@ -42,18 +54,14 @@ final class LogController extends AbstractController
                 }
             }
         } catch (\Throwable $throwable) {
-            $jobs = [];
-            $jobsError = $throwable->getMessage();
+            return $this->json($response, ['ok' => false, 'error' => $throwable->getMessage()], 502);
         }
 
-        return $this->html($response, 'logs', [
-            'pageTitle' => 'Jobs',
+        return $this->json($response, [
+            'ok' => true,
             'projects' => $projects,
             'selectedProject' => $selectedProject,
             'jobs' => $jobs,
-            'error' => trim($projectsError . ($projectsError !== '' && $jobsError !== '' ? ' · ' : '') . $jobsError),
-            'message' => (string) ($query['message'] ?? ''),
-            'activePage' => 'logs',
         ]);
     }
 }

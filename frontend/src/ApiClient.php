@@ -48,11 +48,6 @@ final class ApiClient
      */
     private function request(string $method, string $path, array $query, ?array $payload): array
     {
-        $url = $this->config->apiUrl($path);
-        if ($query !== []) {
-            $url .= '?' . http_build_query($query);
-        }
-
         $headers = [
             'Accept: application/json',
         ];
@@ -70,29 +65,109 @@ final class ApiClient
             $options['http']['content'] = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
 
-        $context = stream_context_create($options);
-        $raw = @file_get_contents($url, false, $context);
-        $responseHeaders = $http_response_header ?? [];
-        $status = $this->statusFromHeaders($responseHeaders);
-        if ($raw === false) {
-            throw new RuntimeException(sprintf('Request to %s failed', $url));
+        $lastTransportError = null;
+        foreach ($this->candidateBaseUrls() as $baseUrl) {
+            $url = rtrim($baseUrl, '/') . '/' . ltrim($path, '/');
+            if ($query !== []) {
+                $url .= '?' . http_build_query($query);
+            }
+
+            $context = stream_context_create($options);
+            $raw = @file_get_contents($url, false, $context);
+            $responseHeaders = $http_response_header ?? [];
+            $status = $this->statusFromHeaders($responseHeaders);
+            if ($raw === false) {
+                $lastTransportError = sprintf('Request to %s failed', $url);
+                continue;
+            }
+
+            $decoded = json_decode($raw, true);
+            if (!is_array($decoded)) {
+                $lastTransportError = sprintf('Invalid JSON response from %s', $url);
+                continue;
+            }
+
+            if ($status >= 400) {
+                $message = (string) ($decoded['error'] ?? $decoded['message'] ?? ('HTTP ' . $status));
+                throw new RuntimeException($message);
+            }
+
+            return [
+                'status' => $status,
+                'data' => $decoded,
+                'raw' => $raw,
+            ];
         }
 
-        $decoded = json_decode($raw, true);
-        if (!is_array($decoded)) {
-            throw new RuntimeException(sprintf('Invalid JSON response from %s', $url));
+        throw new RuntimeException($lastTransportError ?? 'Request failed');
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function candidateBaseUrls(): array
+    {
+        $candidates = [$this->config->apiBaseUrl];
+        $scheme = (string) (parse_url($this->config->apiBaseUrl, PHP_URL_SCHEME) ?: 'http');
+        $port = parse_url($this->config->apiBaseUrl, PHP_URL_PORT);
+        $host = (string) (parse_url($this->config->apiBaseUrl, PHP_URL_HOST) ?: '127.0.0.1');
+
+        if (in_array($host, ['127.0.0.1', 'localhost'], true)) {
+            $fallbackHosts = ['host.docker.internal', '172.17.0.1', $this->dockerGatewayAddress()];
+            foreach ($fallbackHosts as $fallbackHost) {
+                if ($fallbackHost === '' || $fallbackHost === $host) {
+                    continue;
+                }
+                $candidate = $scheme . '://' . $fallbackHost;
+                if ($port !== false && $port !== null) {
+                    $candidate .= ':' . $port;
+                }
+                $candidates[] = $candidate;
+            }
         }
 
-        if ($status >= 400) {
-            $message = (string) ($decoded['error'] ?? $decoded['message'] ?? ('HTTP ' . $status));
-            throw new RuntimeException($message);
+        return array_values(array_unique($candidates));
+    }
+
+    private function dockerGatewayAddress(): string
+    {
+        $routeFile = '/proc/net/route';
+        if (!is_readable($routeFile)) {
+            return '';
         }
 
-        return [
-            'status' => $status,
-            'data' => $decoded,
-            'raw' => $raw,
-        ];
+        $lines = @file($routeFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!is_array($lines)) {
+            return '';
+        }
+
+        foreach (array_slice($lines, 1) as $line) {
+            $parts = preg_split('/\s+/', trim($line));
+            if (!is_array($parts) || count($parts) < 3) {
+                continue;
+            }
+
+            if (($parts[1] ?? '') !== '00000000') {
+                continue;
+            }
+
+            $gatewayHex = $parts[2] ?? '';
+            if ($gatewayHex === '' || !ctype_xdigit($gatewayHex)) {
+                continue;
+            }
+
+            $packed = @pack('V', hexdec($gatewayHex));
+            if ($packed === false) {
+                continue;
+            }
+
+            $address = @inet_ntop($packed);
+            if (is_string($address) && $address !== '') {
+                return $address;
+            }
+        }
+
+        return '';
     }
 
     /**

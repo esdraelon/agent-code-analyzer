@@ -111,23 +111,56 @@ def test_control_api_project_lifecycle_status_and_source_drillthrough(tmp_path: 
     root.mkdir()
     (root / "app.py").write_text("class Box:\n    def hello(self):\n        return 'ok'\n", encoding="utf-8")
 
+    original_ingest_project_tree = projects.ingest_project_tree
+
+    def slow_ingest_project_tree(project: str, refresh: bool = False) -> dict[str, Any]:
+        time.sleep(0.5)
+        return original_ingest_project_tree(project, refresh=refresh)
+
+    monkeypatch.setattr(projects, "ingest_project_tree", slow_ingest_project_tree)
+
     with run_server() as base_url:
+        started = time.monotonic()
         status, response = request_json(
             base_url,
             "POST",
             "/api/projects",
             {"name": "demo", "root_path": str(root), "mode": "directory", "description": "demo project"},
         )
-        assert status == 201
+        elapsed = time.monotonic() - started
+        assert status == 202
+        assert elapsed < 0.75
         assert response["ok"] is True
         assert response["project"]["name"] == "demo"
-        assert response["project"]["ingest"]["file_count"] == 1
+        assert "ingest" not in response["project"]
+        assert response["job"]["project"] == "demo"
+        assert response["job"]["status"] in {"queued", "running"}
+        assert response["result"] is None
+
+        deadline = time.monotonic() + 15
+        while True:
+            status, response = request_json(base_url, "GET", "/api/projects/demo/jobs")
+            assert status == 200
+            job = response["jobs"][0]
+            if job["status"] == "completed":
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+
+        original_project_ingestion_job = projects.project_ingestion_job
+        monkeypatch.setattr(
+            projects,
+            "project_ingestion_job",
+            lambda project_name: (_ for _ in ()).throw(AssertionError(f"unexpected status lookup for {project_name}")),
+        )
 
         status, response = request_json(base_url, "GET", "/api/projects")
         assert status == 200
         assert response["ok"] is True
         assert response["projects"][0]["name"] == "demo"
         assert response["projects"][0]["status"] == "completed"
+
+        monkeypatch.setattr(projects, "project_ingestion_job", original_project_ingestion_job)
 
         status, response = request_json(base_url, "GET", "/api/projects/demo/status")
         assert status == 200
@@ -263,6 +296,49 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
             "results": results[offset : offset + limit],
         }
 
+    class FakeSearchIndex:
+        def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
+            limit = kwargs.get("limit", 10)
+            offset = kwargs.get("offset", 0)
+            results = [
+                {
+                    "project_name": "searchable",
+                    "file_path": "orkui/controller/controller.Search.php",
+                    "symbol_name": "add",
+                    "start_row": 0,
+                    "start_column": 0,
+                    "end_row": 1,
+                    "end_column": 0,
+                    "sqlite_uri": "sqlite://projects/searchable/files/1/symbols/0",
+                    "score": 0.87,
+                    "scope_type": "symbol",
+                    "source_kind": "symbol",
+                    "unit_type": "function",
+                },
+                {
+                    "project_name": "searchable",
+                    "file_path": "system/lib/ork3/class.SearchService.php",
+                    "symbol_name": "search",
+                    "start_row": 0,
+                    "start_column": 0,
+                    "end_row": 1,
+                    "end_column": 0,
+                    "sqlite_uri": "sqlite://projects/searchable/files/2/symbols/0",
+                    "score": 0.73,
+                    "scope_type": "symbol",
+                    "source_kind": "symbol",
+                    "unit_type": "function",
+                },
+            ]
+            return {
+                "query": query,
+                "project": kwargs.get("project"),
+                "scope_type": kwargs.get("scope_type"),
+                "limit": limit,
+                "offset": offset,
+                "results": results[offset : offset + limit],
+            }
+
     def fake_search_code(query: str, **kwargs: Any) -> dict[str, Any]:
         offset = kwargs.get("offset", 0)
         limit = kwargs.get("limit", 10)
@@ -319,7 +395,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         }
 
     monkeypatch.setattr(projects, "lexical_search", fake_lexical_search)
-    monkeypatch.setattr(projects, "search_code", fake_search_code)
+    monkeypatch.setattr(projects, "get_vector_index", lambda: FakeSearchIndex())
 
     with run_server() as base_url:
         status, response = request_json(base_url, "GET", "/api/search/lexical?" + urlencode({"query": "add", "project": "searchable"}))

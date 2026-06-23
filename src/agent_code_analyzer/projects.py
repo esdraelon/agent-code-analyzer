@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -274,9 +275,15 @@ def get_project(project: str) -> dict[str, Any]:
     return _get_project_impl(project)
 
 
-def add_project(project: str, root_path: str, mode: str = "file", description: str = "") -> dict[str, Any]:
+def add_project(
+    project: str,
+    root_path: str,
+    mode: str = "file",
+    description: str = "",
+    ingest: bool = True,
+) -> dict[str, Any]:
     _sync_storage()
-    return _add_project_impl(project, root_path, mode=mode, description=description)
+    return _add_project_impl(project, root_path, mode=mode, description=description, ingest=ingest)
 
 
 def resolve_project_path(project: str, file_path: str) -> Path:
@@ -486,12 +493,28 @@ def _merge_search_results(
     return merged_results[:limit]
 
 
+def _call_with_compatible_kwargs(func: Any, query: str, **kwargs: Any) -> Any:
+    signature = inspect.signature(func)
+    accepts_kwargs = any(param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+    if accepts_kwargs:
+        filtered = {key: value for key, value in kwargs.items() if value is not None}
+    else:
+        allowed = {
+            name
+            for name, param in signature.parameters.items()
+            if name != "query" and param.kind in {inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+        }
+        filtered = {key: value for key, value in kwargs.items() if value is not None and key in allowed}
+    return func(query, **filtered)
+
+
 def search_code(
     query: str,
     *,
     project: str | None = None,
     scope_type: str | None = None,
     directory: str | None = None,
+    symbol_path: str | None = None,
     limit: int = 10,
     offset: int = 0,
     exclude_files: list[str] | None = None,
@@ -510,11 +533,13 @@ def search_code(
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )
-    semantic = get_vector_index().search(
+    semantic = _call_with_compatible_kwargs(
+        get_vector_index().search,
         query,
         project=project,
         scope_type=scope_type,
         directory=directory,
+        symbol_path=symbol_path,
         limit=fetch_limit,
         offset=0,
         exclude_files=exclude_files,

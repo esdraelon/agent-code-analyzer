@@ -14,7 +14,7 @@ from .control_models import IngestionJob, ProjectListItem, SearchResultEnvelope,
 from .ingestion_state import begin_ingestion_checkpoint
 
 
-DEFAULT_API_HOST = "127.0.0.1"
+DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8010
 _ACTIVE_INGESTION_THREADS: dict[str, threading.Thread] = {}
 _ACTIVE_INGESTION_THREADS_LOCK = threading.Lock()
@@ -99,8 +99,10 @@ def _project_status(project_name: str) -> dict[str, Any]:
 def _project_list_items() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for record in projects.list_projects():
-        job = projects.project_ingestion_job(record["name"])
-        status = job["status"] if job is not None else "idle"
+        status = "completed" if record.get("indexed_at") else "idle"
+        if _active_ingestion_thread(record["name"]) is not None:
+            job = _job_from_project(record["name"])
+            status = job["status"] if job is not None else "running"
         item = ProjectListItem(
             name=record["name"],
             root_path=record["root_path"],
@@ -368,10 +370,46 @@ def _handle_projects(handler: BaseHTTPRequestHandler, segments: list[str], query
             _send_error(handler, HTTPStatus.BAD_REQUEST, "name and root_path are required")
             return
         try:
-            result = projects.add_project(project, root_path, mode=mode, description=description)
+            result = projects.add_project(project, root_path, mode=mode, description=description, ingest=False)
         except Exception as exc:
             _send_error(handler, HTTPStatus.BAD_REQUEST, str(exc))
             return
+        if mode == "directory":
+            try:
+                project_data = projects.get_project(project)
+                checkpoint = begin_ingestion_checkpoint(
+                    Path(project_data["db_path"]),
+                    project=project,
+                    root_path=Path(project_data["root_path"]),
+                    mode="semantic_rebuild",
+                    phase="full_rebuild",
+                    total_file_count=0,
+                )
+                _start_ingestion_thread(project, "refresh", True)
+                job = {
+                    "project": checkpoint.project_name,
+                    "job_id": checkpoint.project_name,
+                    "action": checkpoint.mode,
+                    "phase": checkpoint.phase,
+                    "status": checkpoint.status,
+                    "queued_at": checkpoint.queued_at,
+                    "started_at": checkpoint.started_at,
+                    "updated_at": checkpoint.updated_at,
+                    "completed_at": checkpoint.completed_at,
+                    "total_count": checkpoint.total_file_count,
+                    "processed_count": checkpoint.processed_file_count,
+                    "percent_complete": 0.0,
+                    "last_file_path": checkpoint.last_file_path,
+                    "last_file_mtime_ns": checkpoint.last_file_mtime_ns,
+                    "last_file_content_hash": checkpoint.last_file_content_hash,
+                    "last_error": checkpoint.error_state,
+                }
+                _send_json(handler, HTTPStatus.ACCEPTED, {"ok": True, "project": result, "job": job, "result": None})
+                return
+            except Exception as exc:
+                _send_error(handler, HTTPStatus.BAD_REQUEST, str(exc))
+                return
+
         _send_json(handler, HTTPStatus.CREATED, {"ok": True, "project": result})
         return
 
@@ -530,6 +568,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
     project = _query_value(query, "project")
     scope_type = _query_value(query, "scope_type")
     directory = _query_value(query, "directory")
+    symbol_path = _query_value(query, "symbol_path")
     limit = _coerce_int(_query_value(query, "limit"), 10)
     offset = _coerce_int(_query_value(query, "offset"), 0)
     exclude_files = _query_list(query, "exclude_files")
@@ -562,6 +601,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             project=project,
             scope_type=scope_type,
             directory=directory,
+            symbol_path=symbol_path,
             limit=limit,
             offset=offset,
             exclude_files=exclude_files,
@@ -579,6 +619,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             project=project,
             scope_type=scope_type,
             directory=directory,
+            symbol_path=symbol_path,
             limit=limit,
             offset=offset,
             exclude_files=exclude_files,

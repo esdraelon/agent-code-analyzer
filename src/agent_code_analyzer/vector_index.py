@@ -24,7 +24,12 @@ from .semantic_agent import SemanticWriteRequest, SemanticWriter, build_semantic
 from .semantic_chunking import build_method_chunk_spans
 from .semantic_descriptions import build_semantic_description_record
 from .vector_payload_factory import (
+    directory_ancestors,
+    directory_path,
     file_payload,
+    normalize_path_text,
+    scope_path,
+    scope_path_ancestors,
     sqlite_file_uri as factory_sqlite_file_uri,
     sqlite_symbol_uri as factory_sqlite_symbol_uri,
     stable_point_id,
@@ -227,12 +232,17 @@ class QdrantVectorIndex:
         sqlite_uri = _sqlite_chunk_uri(project, file_id, symbol_order, chunk_index)
         parent_symbol_name = str(parent_symbol.get("name", ""))
         parent_symbol_type = str(parent_symbol.get("type", ""))
+        chunk_scope_path = f"{parent_symbol_name or parent_symbol_type or normalize_path_text(file_path)}::chunk-{chunk_index}"
         return {
             "project_name": project,
             "project_root": project_root,
             "file_id": file_id,
             "sqlite_file_id": file_id,
-            "file_path": file_path,
+            "file_path": normalize_path_text(file_path),
+            "directory_path": directory_path(file_path),
+            "directory_ancestors": directory_ancestors(file_path),
+            "scope_path": chunk_scope_path,
+            "scope_path_ancestors": scope_path_ancestors(chunk_scope_path),
             "language": file_language,
             "languages": file_languages,
             "scope_type": "chunk",
@@ -435,9 +445,17 @@ class QdrantVectorIndex:
                 file_mtime_ns=file_mtime_ns,
                 chunk_text=chunk_text,
                 source_kind=source_kind,
+                directory_path_value=directory_path(file_path),
+                directory_ancestors_value=directory_ancestors(file_path),
+                scope_path_value=scope_path(source_kind, file_path=file_path, symbol_name=root_type),
+                scope_path_ancestors_value=scope_path_ancestors(
+                    scope_path(source_kind, file_path=file_path, symbol_name=root_type)
+                ),
             )
         else:
             assert symbol is not None
+            symbol_name = str(symbol.get("name", "")).strip()
+            symbol_scope_path = scope_path("symbol", file_path=file_path, symbol_name=symbol_name)
             payload = symbol_payload(
                 project=project,
                 project_root=project_root,
@@ -449,6 +467,8 @@ class QdrantVectorIndex:
                 root_type=root_type,
                 indexed_at=indexed_at,
                 chunk_text=chunk_text,
+                scope_path_value=symbol_scope_path,
+                scope_path_ancestors_value=scope_path_ancestors(symbol_scope_path),
             )
         point_uri = sqlite_uri or str(payload["sqlite_uri"])
         return qmodels.PointStruct(
@@ -932,6 +952,7 @@ class QdrantVectorIndex:
 
         files_synced = 0
         points = 0
+        pending_records: list[tuple[int, dict[str, Any], list[dict[str, Any]]]] = []
         with storage._connect(db_path) as conn:
             storage._ensure_project_schema(conn)
             rows = conn.execute("SELECT id FROM files ORDER BY rel_path ASC").fetchall()
@@ -939,15 +960,17 @@ class QdrantVectorIndex:
                 file_id = int(row["id"])
                 file_record = ProjectRepository.read_file_record(conn, file_id)
                 symbol_rows = ProjectRepository.symbol_rows(conn, file_id)
-                result = self.sync_records(
-                    project=project,
-                    project_root=root_path,
-                    file_id=file_id,
-                    file_record=file_record,
-                    symbol_rows=symbol_rows,
-                )
-                files_synced += 1
-                points += int(result["points"])
+                pending_records.append((file_id, file_record, symbol_rows))
+        for file_id, file_record, symbol_rows in pending_records:
+            result = self.sync_records(
+                project=project,
+                project_root=root_path,
+                file_id=file_id,
+                file_record=file_record,
+                symbol_rows=symbol_rows,
+            )
+            files_synced += 1
+            points += int(result["points"])
         return {"project": project, "synced": files_synced, "files": files_synced, "points": points}
 
     def search(
@@ -957,6 +980,7 @@ class QdrantVectorIndex:
         project: str | None = None,
         scope_type: str | None = None,
         directory: str | None = None,
+        symbol_path: str | None = None,
         limit: int = 10,
         offset: int = 0,
         exclude_files: list[str] | None = None,
@@ -969,11 +993,12 @@ class QdrantVectorIndex:
             raise ValueError("limit must be at least 1")
 
         logger.info(
-            "vector_index_search query=%r project=%r scope_type=%r directory=%r limit=%d offset=%d",
+            "vector_index_search query=%r project=%r scope_type=%r directory=%r symbol_path=%r limit=%d offset=%d",
             needle,
             project,
             scope_type,
             directory,
+            symbol_path,
             limit,
             offset,
         )
@@ -993,10 +1018,26 @@ class QdrantVectorIndex:
                     match=qmodels.MatchValue(value=scope_type),
                 )
             )
+        if directory:
+            normalized_directory = normalize_path_text(directory).strip("/")
+            if normalized_directory:
+                conditions.append(
+                    qmodels.FieldCondition(
+                        key="directory_ancestors",
+                        match=qmodels.MatchAny(any=[normalized_directory]),
+                    )
+                )
+        if symbol_path:
+            normalized_symbol_path = normalize_path_text(symbol_path).strip("/")
+            if normalized_symbol_path:
+                conditions.append(
+                    qmodels.FieldCondition(
+                        key="scope_path_ancestors",
+                        match=qmodels.MatchAny(any=[normalized_symbol_path]),
+                    )
+                )
         query_filter = qmodels.Filter(must=conditions) if conditions else None
         retrieval_limit = limit + max(offset, 0)
-        if directory:
-            retrieval_limit = max(retrieval_limit * 10, retrieval_limit)
         response = self.client().query_points(
             collection_name=self.collection_name,
             query=self._embed_query(needle),
@@ -1031,12 +1072,6 @@ class QdrantVectorIndex:
             )
             if should_exclude_result(result, exclude_files=excluded_files, exclude_symbols=excluded_symbols):
                 continue
-            if directory:
-                normalized_directory = directory.strip().rstrip("/")
-                if normalized_directory:
-                    file_path = str(result.get("file_path", ""))
-                    if not (file_path == normalized_directory or file_path.startswith(f"{normalized_directory}/")):
-                        continue
             results.append(result)
         results.sort(
             key=lambda item: (
@@ -1055,6 +1090,86 @@ class QdrantVectorIndex:
             "offset": offset,
             "results": results[offset : offset + limit],
         }
+
+    def _path_payload_patch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        file_path = normalize_path_text(str(payload.get("file_path", "")))
+        if not file_path:
+            return {}
+        source_kind = str(payload.get("source_kind") or payload.get("scope_type") or "").strip().lower()
+        directory_text = directory_path(file_path)
+        directory_ancestor_list = directory_ancestors(file_path)
+        scope_text = str(payload.get("scope_path") or "").strip()
+        if not scope_text:
+            symbol_name = str(payload.get("symbol_name") or payload.get("parent_symbol_name") or "").strip()
+            if source_kind == "chunk":
+                chunk_index = payload.get("chunk_index")
+                try:
+                    chunk_index_value = int(chunk_index)
+                except Exception:
+                    chunk_index_value = None
+                scope_text = scope_path("chunk", file_path=file_path, symbol_name=symbol_name, chunk_index=chunk_index_value)
+            elif source_kind == "symbol":
+                scope_text = scope_path("symbol", file_path=file_path, symbol_name=symbol_name)
+            else:
+                scope_text = scope_path("file", file_path=file_path, symbol_name=symbol_name)
+        return {
+            "file_path": file_path,
+            "directory_path": directory_text,
+            "directory_ancestors": directory_ancestor_list,
+            "scope_path": scope_text,
+            "scope_path_ancestors": scope_path_ancestors(scope_text),
+        }
+
+    def backfill_path_payloads(
+        self,
+        *,
+        project: str | None = None,
+        batch_size: int = 256,
+    ) -> dict[str, Any]:
+        self.ensure_collection()
+        scroll_filter: qmodels.Filter | None = None
+        if project:
+            scroll_filter = qmodels.Filter(
+                must=[
+                    qmodels.FieldCondition(
+                        key="project_name",
+                        match=qmodels.MatchValue(value=project),
+                    )
+                ]
+            )
+        updated = 0
+        scanned = 0
+        next_offset: Any = None
+        while True:
+            points, next_offset = self.client().scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                limit=batch_size,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not points:
+                break
+            scanned += len(points)
+            for point in points:
+                payload = dict(getattr(point, "payload", {}) or {})
+                patch = self._path_payload_patch(payload)
+                if not patch:
+                    continue
+                point_id = getattr(point, "id", None)
+                if point_id is None:
+                    continue
+                self.client().set_payload(
+                    collection_name=self.collection_name,
+                    payload=patch,
+                    points=[point_id],
+                    wait=True,
+                )
+                updated += 1
+            if next_offset is None:
+                break
+        return {"project": project, "scanned": scanned, "updated": updated}
 
     def bootstrap_all_projects(self) -> dict[str, Any]:
         if not storage.METADATA_DB.exists():

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -44,6 +46,21 @@ mcp = FastMCP(
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _call_with_compatible_kwargs(func: Any, query: str, **kwargs: Any) -> Any:
+    signature = inspect.signature(func)
+    accepts_kwargs = any(param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+    if accepts_kwargs:
+        filtered = {key: value for key, value in kwargs.items() if value is not None}
+    else:
+        allowed = {
+            name
+            for name, param in signature.parameters.items()
+            if name != "query" and param.kind in {inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+        }
+        filtered = {key: value for key, value in kwargs.items() if value is not None and key in allowed}
+    return func(query, **filtered)
 
 
 @dataclass(frozen=True)
@@ -129,16 +146,21 @@ def semantic_search(
     query: str,
     project: str | None = None,
     scope_type: str | None = None,
+    directory: str | None = None,
+    symbol_path: str | None = None,
     limit: int = 10,
     offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
     """Search the Qdrant-backed project index for semantically similar code chunks."""
-    return get_vector_index().search(
+    return _call_with_compatible_kwargs(
+        get_vector_index().search,
         query,
         project=project,
         scope_type=scope_type,
+        directory=directory,
+        symbol_path=symbol_path,
         limit=limit,
         offset=offset,
         exclude_files=exclude_files,
@@ -175,20 +197,23 @@ def search_code(
     query: str,
     project: str | None = None,
     scope_type: str | None = None,
+    directory: str | None = None,
+    symbol_path: str | None = None,
     limit: int = 10,
     offset: int = 0,
-    directory: str | None = None,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, object]:
     """Search code using both lexical and semantic retrieval, then merge the results."""
-    return search_code_records(
+    return _call_with_compatible_kwargs(
+        search_code_records,
         query,
         project=project,
         scope_type=scope_type,
+        directory=directory,
+        symbol_path=symbol_path,
         limit=limit,
         offset=offset,
-        directory=directory,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )

@@ -5,6 +5,7 @@
 /** @var string $filePath */
 /** @var string $directory */
 /** @var string $scopeType */
+/** @var string $symbolPath */
 /** @var int $pageSize */
 /** @var int $page */
 /** @var int $offset */
@@ -16,7 +17,7 @@
 /** @var string $apiBaseUrl */
 ?>
 <?php
-$buildSearchHref = static function (int $targetPage) use ($mode, $project, $query, $filePath, $directory, $scopeType, $pageSize): string {
+$buildSearchHref = static function (int $targetPage) use ($mode, $project, $query, $filePath, $directory, $scopeType, $symbolPath, $pageSize): string {
     return '/search?' . http_build_query(array_filter([
         'mode' => $mode,
         'project' => $project !== '' ? $project : null,
@@ -24,6 +25,7 @@ $buildSearchHref = static function (int $targetPage) use ($mode, $project, $quer
         'file_path' => $filePath !== '' ? $filePath : null,
         'directory' => $directory !== '' ? $directory : null,
         'scope_type' => $scopeType !== '' ? $scopeType : null,
+        'symbol_path' => $symbolPath !== '' ? $symbolPath : null,
         'page_size' => $pageSize,
         'page' => $targetPage,
     ], static fn (mixed $value): bool => $value !== null && $value !== ''));
@@ -90,7 +92,10 @@ $pageEnd = $offset + count($results);
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div></div>
+            <div>
+                <label>Tree-sitter path</label>
+                <input name="symbol_path" id="search-symbol-path" value="<?= $escape($symbolPath) ?>" placeholder="Restrict results to this scope path" autocomplete="off">
+            </div>
         </div>
         <div class="actions">
             <button type="submit">Run search</button>
@@ -152,8 +157,20 @@ $pageEnd = $offset + count($results);
     const refresh = () => {
         window.clearTimeout(timer);
         timer = window.setTimeout(() => {
-            void fetchPaths('directory', directoryInput.value.trim(), directoryList);
-            void fetchPaths('file', filePathInput.value.trim(), filePathList);
+            const directoryPrefix = directoryInput.value.trim();
+            const filePathPrefix = filePathInput.value.trim();
+
+            if (directoryPrefix.length >= 2) {
+                void fetchPaths('directory', directoryPrefix, directoryList);
+            } else {
+                clearOptions(directoryList);
+            }
+
+            if (filePathPrefix.length >= 2) {
+                void fetchPaths('file', filePathPrefix, filePathList);
+            } else {
+                clearOptions(filePathList);
+            }
         }, 180);
     };
 
@@ -161,8 +178,6 @@ $pageEnd = $offset + count($results);
     directoryInput.addEventListener('input', refresh);
     filePathInput.addEventListener('input', refresh);
     projectInput.addEventListener('change', refresh);
-
-    refresh();
 })();
 </script>
 
