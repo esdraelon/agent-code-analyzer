@@ -1,5 +1,4 @@
 <?php
-/** @var array<int,array<string,mixed>> $projects */
 /** @var string $message */
 /** @var string $error */
 ?>
@@ -13,7 +12,7 @@
 <div class="grid two">
     <section class="card">
         <h2>Onboard a project</h2>
-        <form method="post" action="/projects/create">
+        <form method="post" action="/projects/create" data-async-endpoint="/api/projects">
             <div class="grid" style="gap:12px;">
                 <input name="name" placeholder="Project name" required>
                 <input name="root_path" placeholder="Root path, for example /home/hal9k/host-tools/agent-code-analyzer" required>
@@ -39,46 +38,15 @@
             <span class="pill">Jobs</span>
             <span class="pill">Source drill-through</span>
         </div>
+        <p class="muted" style="margin-bottom:0;">Project registration, reingest, and offboard actions run asynchronously in the browser.</p>
     </section>
 </div>
 
 <section class="card" style="margin-top:18px;">
-    <h2>Projects</h2>
-    <?php if ($projects === []) : ?>
-        <p class="muted">No projects are registered yet.</p>
-    <?php else : ?>
-        <div class="list">
-            <?php foreach ($projects as $project) : ?>
-                <article class="list-item">
-                    <div class="topbar" style="margin-bottom:0; align-items:flex-start;">
-                        <div>
-                            <h3 style="margin-bottom:6px;"><a href="/projects/<?= rawurlencode((string) ($project['name'] ?? '')) ?>"><?= $escape($project['name'] ?? '') ?></a></h3>
-                            <div class="muted"><?= $escape($project['root_path'] ?? '') ?></div>
-                        </div>
-                        <span class="pill"><?= $escape($project['status'] ?? 'idle') ?></span>
-                    </div>
-                    <div class="kv" style="margin-top:14px;">
-                        <div><strong>Mode:</strong> <?= $escape($project['mode'] ?? '') ?></div>
-                        <div><strong>Indexed:</strong> <?= $escape($project['indexed_at'] ?? '—') ?></div>
-                        <div><strong>Files:</strong> <?= $escape($project['file_count'] ?? 0) ?></div>
-                        <div><strong>Symbols:</strong> <?= $escape($project['symbol_count'] ?? 0) ?></div>
-                    </div>
-                    <?php if (!empty($project['description'])) : ?>
-                        <p class="muted" style="margin-bottom:0;"><?= $escape($project['description']) ?></p>
-                    <?php endif; ?>
-                    <div class="actions">
-                        <a class="button secondary" href="/projects/<?= rawurlencode((string) ($project['name'] ?? '')) ?>">Open</a>
-                        <form method="post" action="/projects/<?= rawurlencode((string) ($project['name'] ?? '')) ?>/reingest">
-                            <input type="hidden" name="mode" value="refresh">
-                            <input type="hidden" name="refresh" value="true">
-                            <button type="submit">Reingest</button>
-                        </form>
-                        <form method="post" action="/projects/<?= rawurlencode((string) ($project['name'] ?? '')) ?>/offboard" onsubmit="return confirm('Remove this project and its indexes?');">
-                            <button type="submit" class="danger">Offboard</button>
-                        </form>
-                    </div>
-                </article>
-            <?php endforeach; ?>
-        </div>
-    <?php endif; ?>
+    <div class="topbar" style="margin-bottom:12px;">
+        <h2 style="margin:0;">Projects</h2>
+        <span class="pill" id="projects-count">Loading…</span>
+    </div>
+    <div id="projects-status" class="muted">Loading projects asynchronously.</div>
+    <div id="projects-list" class="list" style="margin-top:14px;"></div>
 </section>

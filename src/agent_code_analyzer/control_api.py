@@ -14,7 +14,7 @@ from .control_models import IngestionJob, ProjectListItem, SearchResultEnvelope,
 from .ingestion_state import begin_ingestion_checkpoint
 
 
-DEFAULT_API_HOST = "127.0.0.1"
+DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8010
 _ACTIVE_INGESTION_THREADS: dict[str, threading.Thread] = {}
 _ACTIVE_INGESTION_THREADS_LOCK = threading.Lock()
@@ -99,8 +99,10 @@ def _project_status(project_name: str) -> dict[str, Any]:
 def _project_list_items() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for record in projects.list_projects():
-        job = projects.project_ingestion_job(record["name"])
-        status = job["status"] if job is not None else "idle"
+        status = "completed" if record.get("indexed_at") else "idle"
+        if _active_ingestion_thread(record["name"]) is not None:
+            job = _job_from_project(record["name"])
+            status = job["status"] if job is not None else "running"
         item = ProjectListItem(
             name=record["name"],
             root_path=record["root_path"],
@@ -239,6 +241,32 @@ def _frontend_search_href(mode: str, result: dict[str, Any]) -> str | None:
     return "/search?" + urlencode(query)
 
 
+def _search_result_excerpt(result: dict[str, Any], line_count: int = 3) -> dict[str, Any] | None:
+    project = result.get("project_name") or result.get("project")
+    file_path = result.get("file_path")
+    if not project or not file_path:
+        return None
+
+    start_row = result.get("start_row")
+    start_line = (int(start_row) + 1) if isinstance(start_row, int) and start_row >= 0 else 1
+    try:
+        resolved = projects.resolve_project_path(str(project), str(file_path))
+    except Exception:
+        return None
+
+    excerpt = _file_excerpt(resolved, start_line, start_line + max(1, line_count) - 1)
+    if excerpt.strip() == "":
+        return None
+
+    excerpt_lines = excerpt.splitlines()
+    end_line = start_line + max(len(excerpt_lines), 1) - 1
+    return {
+        "start_line": start_line,
+        "end_line": end_line,
+        "content": excerpt,
+    }
+
+
 def _related_index_links(result: dict[str, Any], index_type: str) -> list[dict[str, Any]]:
     project = result.get("project_name") or result.get("project")
     file_path = result.get("file_path")
@@ -282,6 +310,7 @@ def _normalize_search_result(result: dict[str, Any], index_type: str) -> dict[st
         if result.get("project_name") or result.get("project")
         else None,
         related_index_links=_related_index_links(result, index_type),
+        excerpt=_search_result_excerpt(result),
         extra={
             "unit_type": result.get("unit_type"),
             "source_kind": result.get("source_kind"),
@@ -341,10 +370,46 @@ def _handle_projects(handler: BaseHTTPRequestHandler, segments: list[str], query
             _send_error(handler, HTTPStatus.BAD_REQUEST, "name and root_path are required")
             return
         try:
-            result = projects.add_project(project, root_path, mode=mode, description=description)
+            result = projects.add_project(project, root_path, mode=mode, description=description, ingest=False)
         except Exception as exc:
             _send_error(handler, HTTPStatus.BAD_REQUEST, str(exc))
             return
+        if mode == "directory":
+            try:
+                project_data = projects.get_project(project)
+                checkpoint = begin_ingestion_checkpoint(
+                    Path(project_data["db_path"]),
+                    project=project,
+                    root_path=Path(project_data["root_path"]),
+                    mode="semantic_rebuild",
+                    phase="full_rebuild",
+                    total_file_count=0,
+                )
+                _start_ingestion_thread(project, "refresh", True)
+                job = {
+                    "project": checkpoint.project_name,
+                    "job_id": checkpoint.project_name,
+                    "action": checkpoint.mode,
+                    "phase": checkpoint.phase,
+                    "status": checkpoint.status,
+                    "queued_at": checkpoint.queued_at,
+                    "started_at": checkpoint.started_at,
+                    "updated_at": checkpoint.updated_at,
+                    "completed_at": checkpoint.completed_at,
+                    "total_count": checkpoint.total_file_count,
+                    "processed_count": checkpoint.processed_file_count,
+                    "percent_complete": 0.0,
+                    "last_file_path": checkpoint.last_file_path,
+                    "last_file_mtime_ns": checkpoint.last_file_mtime_ns,
+                    "last_file_content_hash": checkpoint.last_file_content_hash,
+                    "last_error": checkpoint.error_state,
+                }
+                _send_json(handler, HTTPStatus.ACCEPTED, {"ok": True, "project": result, "job": job, "result": None})
+                return
+            except Exception as exc:
+                _send_error(handler, HTTPStatus.BAD_REQUEST, str(exc))
+                return
+
         _send_json(handler, HTTPStatus.CREATED, {"ok": True, "project": result})
         return
 
@@ -503,7 +568,9 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
     project = _query_value(query, "project")
     scope_type = _query_value(query, "scope_type")
     directory = _query_value(query, "directory")
+    symbol_path = _query_value(query, "symbol_path")
     limit = _coerce_int(_query_value(query, "limit"), 10)
+    offset = _coerce_int(_query_value(query, "offset"), 0)
     exclude_files = _query_list(query, "exclude_files")
     exclude_symbols = _query_list(query, "exclude_symbols")
     search_query = _query_value(query, "query")
@@ -518,6 +585,7 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             scope_type=scope_type,
             directory=directory,
             limit=limit,
+            offset=offset,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )
@@ -533,13 +601,15 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             project=project,
             scope_type=scope_type,
             directory=directory,
+            symbol_path=symbol_path,
             limit=limit,
+            offset=offset,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )["semantic"]
         results = [
             _normalize_search_result(item, "semantic")
-            for item in raw.get("results", [])
+            for item in raw.get("results", [])[offset : offset + limit]
             if _result_within_directory(item, directory)
         ]
         payload = {"ok": True, "query": raw, "results": results}
@@ -549,7 +619,9 @@ def _handle_search(handler: BaseHTTPRequestHandler, segments: list[str], query: 
             project=project,
             scope_type=scope_type,
             directory=directory,
+            symbol_path=symbol_path,
             limit=limit,
+            offset=offset,
             exclude_files=exclude_files,
             exclude_symbols=exclude_symbols,
         )

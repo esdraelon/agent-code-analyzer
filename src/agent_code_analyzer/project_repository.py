@@ -42,9 +42,9 @@ class ProjectRepository:
         with ProjectRepository.connect(storage.METADATA_DB) as conn:
             ProjectRepository.init_metadata_schema(conn)
             row = conn.execute("SELECT * FROM projects WHERE name = ?", (project,)).fetchone()
-            if row is None:
-                return None
-            return ProjectRowMapper.row_to_project_dict(row)
+        if row is None:
+            return None
+        return ProjectRowMapper.row_to_project_dict(row)
 
     @staticmethod
     def list_projects() -> list[dict[str, object]]:
@@ -53,7 +53,7 @@ class ProjectRepository:
         with ProjectRepository.connect(storage.METADATA_DB) as conn:
             ProjectRepository.init_metadata_schema(conn)
             rows = conn.execute("SELECT * FROM projects ORDER BY name ASC").fetchall()
-            return [ProjectRowMapper.row_to_project_dict(row) for row in rows]
+        return [ProjectRowMapper.row_to_project_dict(row) for row in rows]
 
     @staticmethod
     def search_projects(query: str) -> list[dict[str, object]]:
@@ -79,7 +79,7 @@ class ProjectRepository:
                 """,
                 (pattern, pattern, pattern, pattern),
             ).fetchall()
-            return [ProjectRowMapper.row_to_project_dict(row) for row in rows]
+        return [ProjectRowMapper.row_to_project_dict(row) for row in rows]
 
     @staticmethod
     def write_project_summary(

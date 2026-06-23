@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -274,9 +275,15 @@ def get_project(project: str) -> dict[str, Any]:
     return _get_project_impl(project)
 
 
-def add_project(project: str, root_path: str, mode: str = "file", description: str = "") -> dict[str, Any]:
+def add_project(
+    project: str,
+    root_path: str,
+    mode: str = "file",
+    description: str = "",
+    ingest: bool = True,
+) -> dict[str, Any]:
     _sync_storage()
-    return _add_project_impl(project, root_path, mode=mode, description=description)
+    return _add_project_impl(project, root_path, mode=mode, description=description, ingest=ingest)
 
 
 def resolve_project_path(project: str, file_path: str) -> Path:
@@ -365,6 +372,16 @@ def remove_project(project: str) -> dict[str, Any]:
     return _remove_project_impl(project)
 
 
+def _normalize_offset(offset: int) -> int:
+    if offset < 0:
+        raise ValueError("offset must be at least 0")
+    return offset
+
+
+def _page_results(results: list[dict[str, Any]], *, limit: int, offset: int) -> list[dict[str, Any]]:
+    return results[offset : offset + limit]
+
+
 def lexical_search(
     query: str,
     *,
@@ -372,22 +389,26 @@ def lexical_search(
     scope_type: str | None = None,
     directory: str | None = None,
     limit: int = 10,
+    offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     _sync_storage()
+    offset = _normalize_offset(offset)
     excluded_files = normalize_exclusions(exclude_files)
     excluded_symbols = normalize_exclusions(exclude_symbols)
     if project is not None:
         project_data = get_project(project)
         with _storage._connect(Path(project_data["db_path"])) as conn:
+            fetch_limit = limit + offset
             result = _lexical_search_impl(
                 conn,
                 query,
                 project=project,
                 scope_type=scope_type,
                 directory=directory,
-                limit=limit,
+                limit=fetch_limit,
+                offset=0,
                 exclude_files=exclude_files,
                 exclude_symbols=exclude_symbols,
             )
@@ -396,9 +417,14 @@ def lexical_search(
                 for item in result.get("results", [])
                 if not should_exclude_result(item, exclude_files=excluded_files, exclude_symbols=excluded_symbols)
             ]
+            result["limit"] = limit
+            result["offset"] = offset
+            result["results"] = _page_results(result["results"], limit=limit, offset=offset)
+            result["total_count"] = int(result.get("total_count", len(result.get("results", []))))
             return result
 
     results: list[dict[str, Any]] = []
+    fetch_limit = limit + offset
     for project_record in list_projects():
         with _storage._connect(Path(project_record["db_path"])) as conn:
             search_result = _lexical_search_impl(
@@ -407,7 +433,8 @@ def lexical_search(
                 project=project_record["name"],
                 scope_type=scope_type,
                 directory=directory,
-                limit=limit,
+                limit=fetch_limit,
+                offset=0,
                 exclude_files=exclude_files,
                 exclude_symbols=exclude_symbols,
             )
@@ -425,7 +452,17 @@ def lexical_search(
             item.get("file_path", ""),
         )
     )
-    return {"query": query, "project": None, "scope_type": scope_type, "directory": directory, "limit": limit, "results": results[:limit]}
+    total_count = len(results)
+    return {
+        "query": query,
+        "project": None,
+        "scope_type": scope_type,
+        "directory": directory,
+        "limit": limit,
+        "offset": offset,
+        "total_count": total_count,
+        "results": _page_results(results, limit=limit, offset=offset),
+    }
 
 
 def _merge_search_results(
@@ -459,51 +496,78 @@ def _merge_search_results(
     return merged_results[:limit]
 
 
+def _call_with_compatible_kwargs(func: Any, query: str, **kwargs: Any) -> Any:
+    signature = inspect.signature(func)
+    accepts_kwargs = any(param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+    if accepts_kwargs:
+        filtered = {key: value for key, value in kwargs.items() if value is not None}
+    else:
+        allowed = {
+            name
+            for name, param in signature.parameters.items()
+            if name != "query" and param.kind in {inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+        }
+        filtered = {key: value for key, value in kwargs.items() if value is not None and key in allowed}
+    return func(query, **filtered)
+
+
 def search_code(
     query: str,
     *,
     project: str | None = None,
     scope_type: str | None = None,
     directory: str | None = None,
+    symbol_path: str | None = None,
     limit: int = 10,
+    offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     _sync_storage()
+    offset = _normalize_offset(offset)
+    fetch_limit = limit + offset
     lexical = lexical_search(
         query,
         project=project,
         scope_type=scope_type,
         directory=directory,
-        limit=limit,
+        limit=fetch_limit,
+        offset=0,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
     )
-    semantic = get_vector_index().search(
+    semantic = _call_with_compatible_kwargs(
+        get_vector_index().search,
         query,
         project=project,
         scope_type=scope_type,
         directory=directory,
-        limit=limit,
+        symbol_path=symbol_path,
+        limit=fetch_limit,
+        offset=0,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
+        fetch_all=True,
     )
     excluded_files = normalize_exclusions(exclude_files)
     excluded_symbols = normalize_exclusions(exclude_symbols)
     results = _merge_search_results(
         lexical,
         semantic,
-        limit=limit,
+        limit=fetch_limit,
         exclude_files=excluded_files,
         exclude_symbols=excluded_symbols,
     )
+    total_count = len(results)
     return {
         "query": query,
         "project": project,
         "scope_type": scope_type,
         "directory": directory,
         "limit": limit,
+        "offset": offset,
         "lexical": lexical,
         "semantic": semantic,
-        "results": results,
+        "total_count": total_count,
+        "results": _page_results(results, limit=limit, offset=offset),
     }

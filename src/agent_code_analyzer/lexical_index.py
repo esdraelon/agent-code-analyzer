@@ -99,6 +99,7 @@ def search(
     scope_type: str | None = None,
     directory: str | None = None,
     limit: int = 10,
+    offset: int = 0,
     exclude_files: list[str] | None = None,
     exclude_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -112,6 +113,7 @@ def search(
             "scope_type": scope_type,
             "directory": directory,
             "limit": limit,
+            "offset": offset,
             "results": [],
         }
 
@@ -149,6 +151,7 @@ def search(
     )
     sort_elapsed_ms = (perf_counter() - sort_started_at) * 1000.0
     total_elapsed_ms = (perf_counter() - started_at) * 1000.0
+    total_count = len(results)
 
     logger.info(
         "lexical_search_timing query=%r project=%r scope_type=%r candidates=%d matched=%d candidate_ms=%.3f scoring_ms=%.3f sort_ms=%.3f total_ms=%.3f",
@@ -168,5 +171,7 @@ def search(
         "scope_type": scope_type,
         "directory": directory,
         "limit": limit,
-        "results": results[:limit],
+        "offset": offset,
+        "total_count": total_count,
+        "results": results[offset : offset + limit],
     }

@@ -11,8 +11,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= $escape($pageTitle) ?></title>
     <link rel="stylesheet" href="/assets/app.css">
+    <script src="/assets/app.js" defer></script>
 </head>
-<body>
+<body data-page="<?= $escape($activePage ?? '') ?>">
 <div class="shell">
     <header class="topbar">
         <div class="brand">
@@ -26,6 +27,7 @@
         </nav>
     </header>
 
+    <div id="async-flash" class="banner" hidden></div>
     <?= $content ?>
 </div>
 </body>

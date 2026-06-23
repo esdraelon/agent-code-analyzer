@@ -5,11 +5,35 @@
 /** @var string $filePath */
 /** @var string $directory */
 /** @var string $scopeType */
-/** @var int $limit */
+/** @var string $symbolPath */
+/** @var int $pageSize */
+/** @var int $page */
+/** @var int $offset */
+/** @var bool $hasPreviousPage */
+/** @var bool $hasNextPage */
 /** @var array<int,array<string,mixed>> $results */
 /** @var array<int,array<string,mixed>> $projects */
 /** @var string $error */
 /** @var string $apiBaseUrl */
+/** @var int $totalHits */
+?>
+<?php
+$buildSearchHref = static function (int $targetPage) use ($mode, $project, $query, $filePath, $directory, $scopeType, $symbolPath, $pageSize): string {
+    return '/search?' . http_build_query(array_filter([
+        'mode' => $mode,
+        'project' => $project !== '' ? $project : null,
+        'query' => $query !== '' ? $query : null,
+        'file_path' => $filePath !== '' ? $filePath : null,
+        'directory' => $directory !== '' ? $directory : null,
+        'scope_type' => $scopeType !== '' ? $scopeType : null,
+        'symbol_path' => $symbolPath !== '' ? $symbolPath : null,
+        'page_size' => $pageSize,
+        'page' => $targetPage,
+    ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+};
+
+$pageStart = $results === [] ? 0 : $offset + 1;
+$pageEnd = $offset + count($results);
 ?>
 <section class="card hero">
     <div class="eyebrow">Search</div>
@@ -45,8 +69,8 @@
                 <input name="query" id="search-query" value="<?= $escape($query) ?>" placeholder="Search text">
             </div>
             <div>
-                <label>Limit</label>
-                <input name="limit" type="number" min="1" max="50" value="<?= $escape($limit) ?>">
+                <label>Page size</label>
+                <input name="page_size" type="number" min="1" max="50" value="<?= $escape($pageSize) ?>">
             </div>
         </div>
         <div class="form-row" style="margin-top:12px;">
@@ -69,7 +93,10 @@
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div></div>
+            <div>
+                <label>Tree-sitter path</label>
+                <input name="symbol_path" id="search-symbol-path" value="<?= $escape($symbolPath) ?>" placeholder="Restrict results to this scope path" autocomplete="off">
+            </div>
         </div>
         <div class="actions">
             <button type="submit">Run search</button>
@@ -131,8 +158,20 @@
     const refresh = () => {
         window.clearTimeout(timer);
         timer = window.setTimeout(() => {
-            void fetchPaths('directory', directoryInput.value.trim(), directoryList);
-            void fetchPaths('file', filePathInput.value.trim(), filePathList);
+            const directoryPrefix = directoryInput.value.trim();
+            const filePathPrefix = filePathInput.value.trim();
+
+            if (directoryPrefix.length >= 2) {
+                void fetchPaths('directory', directoryPrefix, directoryList);
+            } else {
+                clearOptions(directoryList);
+            }
+
+            if (filePathPrefix.length >= 2) {
+                void fetchPaths('file', filePathPrefix, filePathList);
+            } else {
+                clearOptions(filePathList);
+            }
         }, 180);
     };
 
@@ -140,8 +179,6 @@
     directoryInput.addEventListener('input', refresh);
     filePathInput.addEventListener('input', refresh);
     projectInput.addEventListener('change', refresh);
-
-    refresh();
 })();
 </script>
 
@@ -152,7 +189,19 @@
 <section class="card" style="margin-top:18px;">
     <div class="topbar" style="margin-bottom:12px;">
         <h3 style="margin:0;">Results</h3>
-        <span class="pill"><?= $escape(count($results)) ?> hits</span>
+        <div class="actions" style="gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+            <span class="pill">Page <?= $escape((string) $page) ?></span>
+            <?php if ($results !== []) : ?>
+                <span class="pill"><?= $escape(sprintf('%d-%d', $pageStart, $pageEnd)) ?> of <?= $escape((string) $totalHits) ?></span>
+            <?php endif; ?>
+            <span class="pill"><?= $escape(count($results)) ?> hits of <?= $escape((string) $totalHits) ?></span>
+            <?php if ($hasPreviousPage) : ?>
+                <a class="button secondary" href="<?= $escape($buildSearchHref($page - 1)) ?>">Prev</a>
+            <?php endif; ?>
+            <?php if ($hasNextPage) : ?>
+                <a class="button secondary" href="<?= $escape($buildSearchHref($page + 1)) ?>">Next</a>
+            <?php endif; ?>
+        </div>
     </div>
     <?php if ($results === []) : ?>
         <p class="muted">Run a query to see search output.</p>
@@ -246,6 +295,17 @@
                                 }
                                 ?>
                                 <a class="pill" href="<?= $escape((string) $relatedHref) ?>"><?= $escape($rel) ?></a>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if (!empty($result['excerptRows'])) : ?>
+                        <div class="source-excerpt" style="margin-top:12px;">
+                            <?php foreach ((array) $result['excerptRows'] as $row) : ?>
+                                <div class="source-line">
+                                    <span class="source-line-no"><?= $escape((string) ($row['line_no'] ?? '·')) ?></span>
+                                    <span class="source-line-text syntax"><?= $row['html'] ?? '' ?></span>
+                                </div>
                             <?php endforeach; ?>
                         </div>
                     <?php endif; ?>

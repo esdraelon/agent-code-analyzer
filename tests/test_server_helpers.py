@@ -38,13 +38,26 @@ class FakeSemanticIndex:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def search(self, query: str, *, project=None, scope_type=None, limit: int = 10, exclude_files=None, exclude_symbols=None) -> dict[str, object]:
+    def search(
+        self,
+        query: str,
+        *,
+        project=None,
+        scope_type=None,
+        limit: int = 10,
+        offset: int = 0,
+        directory=None,
+        exclude_files=None,
+        exclude_symbols=None,
+    ) -> dict[str, object]:
         self.calls.append(
             {
                 "query": query,
                 "project": project,
                 "scope_type": scope_type,
                 "limit": limit,
+                "offset": offset,
+                "directory": directory,
                 "exclude_files": exclude_files,
                 "exclude_symbols": exclude_symbols,
             }
@@ -54,6 +67,7 @@ class FakeSemanticIndex:
             "project": project,
             "scope_type": scope_type,
             "limit": limit,
+            "offset": offset,
             "results": [{"sqlite_uri": "sqlite://projects/demo/files/1", "score": 0.9}],
         }
 
@@ -62,13 +76,26 @@ class FakeLexicalIndex:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def __call__(self, query: str, *, project=None, scope_type=None, limit: int = 10, exclude_files=None, exclude_symbols=None) -> dict[str, object]:
+    def __call__(
+        self,
+        query: str,
+        *,
+        project=None,
+        scope_type=None,
+        limit: int = 10,
+        offset: int = 0,
+        directory=None,
+        exclude_files=None,
+        exclude_symbols=None,
+    ) -> dict[str, object]:
         self.calls.append(
             {
                 "query": query,
                 "project": project,
                 "scope_type": scope_type,
                 "limit": limit,
+                "offset": offset,
+                "directory": directory,
                 "exclude_files": exclude_files,
                 "exclude_symbols": exclude_symbols,
             }
@@ -78,6 +105,7 @@ class FakeLexicalIndex:
             "project": project,
             "scope_type": scope_type,
             "limit": limit,
+            "offset": offset,
             "results": [{"sqlite_uri": "sqlite://projects/demo/files/2", "score": 0.95}],
         }
 
@@ -89,7 +117,7 @@ def test_semantic_search_tool_delegates_to_vector_index(monkeypatch) -> None:
     result = server.semantic_search("hello world", project="demo", scope_type="symbol", limit=4)
 
     assert fake_index.calls == [
-        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4, "exclude_files": None, "exclude_symbols": None}
+        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4, "offset": 0, "directory": None, "exclude_files": None, "exclude_symbols": None}
     ]
     assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/1"
 
@@ -101,7 +129,7 @@ def test_lexical_search_tool_delegates_to_project_search(monkeypatch) -> None:
     result = server.lexical_search("hello world", project="demo", scope_type="symbol", limit=4)
 
     assert fake_lexical.calls == [
-        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4, "exclude_files": None, "exclude_symbols": None}
+        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4, "offset": 0, "directory": None, "exclude_files": None, "exclude_symbols": None}
     ]
     assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
 
@@ -113,7 +141,7 @@ def test_search_code_tool_delegates_to_project_search(monkeypatch) -> None:
     result = server.search_code("hello world", project="demo", scope_type="symbol", limit=4)
 
     assert fake_search.calls == [
-        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4, "exclude_files": None, "exclude_symbols": None}
+        {"query": "hello world", "project": "demo", "scope_type": "symbol", "limit": 4, "offset": 0, "directory": None, "exclude_files": None, "exclude_symbols": None}
     ]
     assert result["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
 

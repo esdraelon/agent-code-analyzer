@@ -41,9 +41,16 @@ $app->post('/projects/create', [$projectController, 'create']);
 $app->get('/projects/{project}', [$projectController, 'show']);
 $app->post('/projects/{project}/reingest', [$projectController, 'reingest']);
 $app->post('/projects/{project}/offboard', [$projectController, 'delete']);
+$app->get('/api/projects', [$projectController, 'projectsJson']);
+$app->post('/api/projects', [$projectController, 'createJson']);
+$app->get('/api/projects/{project}/status', [$projectController, 'statusJson']);
+$app->get('/api/projects/{project}/jobs', [$projectController, 'jobsJson']);
+$app->post('/api/projects/{project}/reingest', [$projectController, 'reingestJson']);
+$app->delete('/api/projects/{project}', [$projectController, 'deleteJson']);
 $app->get('/api/projects/{project}/paths', [$projectController, 'paths']);
 $app->get('/search', [$searchController, 'index']);
 $app->get('/source', [$sourceController, 'show']);
 $app->get('/logs', [$logController, 'index']);
+$app->get('/api/logs', [$logController, 'jobsJson']);
 
 $app->run();

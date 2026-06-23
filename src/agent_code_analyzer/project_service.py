@@ -87,7 +87,13 @@ def get_project(project: str) -> dict[str, Any]:
     return metadata
 
 
-def add_project(project: str, root_path: str, mode: str = "file", description: str = "") -> dict[str, Any]:
+def add_project(
+    project: str,
+    root_path: str,
+    mode: str = "file",
+    description: str = "",
+    ingest: bool = True,
+) -> dict[str, Any]:
     project = storage._normalize_project(project)
     mode = mode.strip().lower()
     if mode not in {"file", "directory"}:
@@ -164,7 +170,7 @@ def add_project(project: str, root_path: str, mode: str = "file", description: s
             )
 
     result = get_project(project)
-    if mode == "directory":
+    if ingest and mode == "directory":
         result["ingest"] = ingest_project_tree(project, refresh=True)
     return result
 
@@ -813,13 +819,9 @@ def project_index_summary(project: str) -> dict[str, Any]:
     with storage._db_lock(db_path):
         with storage._connect(db_path) as conn:
             storage._ensure_project_schema(conn)
-            symbol_type_counts = Counter(
-                _normalize_entry_type(row["type"])
-                for row in conn.execute(
-                    "SELECT type FROM symbols",
-                ).fetchall()
-            )
+            symbol_rows = conn.execute("SELECT type FROM symbols").fetchall()
 
+    symbol_type_counts = Counter(_normalize_entry_type(row["type"]) for row in symbol_rows)
     lexical_scope_counts = Counter({"file": file_count, "symbol": symbol_total})
     lexical_unit_counts = Counter(symbol_type_counts)
     lexical_total = hard_total
