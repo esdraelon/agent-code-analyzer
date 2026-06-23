@@ -293,6 +293,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
             "scope_type": kwargs.get("scope_type"),
             "limit": limit,
             "offset": offset,
+            "total_count": 2,
             "results": results[offset : offset + limit],
         }
 
@@ -336,6 +337,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
                 "scope_type": kwargs.get("scope_type"),
                 "limit": limit,
                 "offset": offset,
+                "total_count": 2,
                 "results": results[offset : offset + limit],
             }
 
@@ -391,6 +393,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
             "offset": offset,
             "lexical": lexical,
             "semantic": semantic,
+            "total_count": 2,
             "results": lexical["results"][offset : offset + limit],
         }
 
@@ -402,6 +405,7 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         assert status == 200
         assert response["ok"] is True
         assert response["results"][0]["index_type"] == "lexical"
+        assert response["query"]["total_count"] == 2
         assert response["results"][0]["source_link"]["href"].startswith("/api/projects/searchable/files/orkui/controller/controller.Search.php")
         assert response["results"][0]["excerpt"]["content"].startswith("1: <?php")
         related_hrefs = {link["rel"]: link["href"] for link in response["results"][0]["related_index_links"]}
@@ -413,11 +417,13 @@ def test_control_api_search_endpoints_normalize_results(tmp_path: Path, monkeypa
         status, response = request_json(base_url, "GET", "/api/search/semantic?" + urlencode({"query": "add", "project": "searchable"}))
         assert status == 200
         assert response["results"][0]["index_type"] == "semantic"
+        assert response["query"]["total_count"] == 2
         assert response["results"][0]["excerpt"]["content"].startswith("1: <?php")
 
         status, response = request_json(base_url, "GET", "/api/search/unified?" + urlencode({"query": "add", "project": "searchable"}))
         assert status == 200
         assert response["results"][0]["index_type"] == "unified"
+        assert response["query"]["total_count"] == 2
         assert set(response["results"][0]["backends"]) == {"lexical", "semantic"}
 
         status, response = request_json(base_url, "GET", "/api/search/semantic?" + urlencode({"query": "add", "project": "searchable", "directory": "orkui"}))

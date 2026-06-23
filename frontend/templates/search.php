@@ -15,6 +15,7 @@
 /** @var array<int,array<string,mixed>> $projects */
 /** @var string $error */
 /** @var string $apiBaseUrl */
+/** @var int $totalHits */
 ?>
 <?php
 $buildSearchHref = static function (int $targetPage) use ($mode, $project, $query, $filePath, $directory, $scopeType, $symbolPath, $pageSize): string {
@@ -191,9 +192,9 @@ $pageEnd = $offset + count($results);
         <div class="actions" style="gap:8px; flex-wrap:wrap; justify-content:flex-end;">
             <span class="pill">Page <?= $escape((string) $page) ?></span>
             <?php if ($results !== []) : ?>
-                <span class="pill"><?= $escape(sprintf('%d-%d', $pageStart, $pageEnd)) ?> of page results</span>
+                <span class="pill"><?= $escape(sprintf('%d-%d', $pageStart, $pageEnd)) ?> of <?= $escape((string) $totalHits) ?></span>
             <?php endif; ?>
-            <span class="pill"><?= $escape(count($results)) ?> hits</span>
+            <span class="pill"><?= $escape(count($results)) ?> hits of <?= $escape((string) $totalHits) ?></span>
             <?php if ($hasPreviousPage) : ?>
                 <a class="button secondary" href="<?= $escape($buildSearchHref($page - 1)) ?>">Prev</a>
             <?php endif; ?>

@@ -985,6 +985,7 @@ class QdrantVectorIndex:
         offset: int = 0,
         exclude_files: list[str] | None = None,
         exclude_symbols: list[str] | None = None,
+        fetch_all: bool = False,
     ) -> dict[str, Any]:
         needle = query.strip()
         if not needle:
@@ -1037,7 +1038,13 @@ class QdrantVectorIndex:
                     )
                 )
         query_filter = qmodels.Filter(must=conditions) if conditions else None
-        retrieval_limit = limit + max(offset, 0)
+        count_result = self.client().count(
+            collection_name=self.collection_name,
+            count_filter=query_filter,
+            exact=True,
+        )
+        total_count = int(getattr(count_result, "count", 0) or 0)
+        retrieval_limit = total_count if fetch_all else limit + max(offset, 0)
         response = self.client().query_points(
             collection_name=self.collection_name,
             query=self._embed_query(needle),
@@ -1088,6 +1095,7 @@ class QdrantVectorIndex:
             "directory": directory,
             "limit": limit,
             "offset": offset,
+            "total_count": total_count,
             "results": results[offset : offset + limit],
         }
 

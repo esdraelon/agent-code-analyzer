@@ -151,6 +151,7 @@ def search(
     )
     sort_elapsed_ms = (perf_counter() - sort_started_at) * 1000.0
     total_elapsed_ms = (perf_counter() - started_at) * 1000.0
+    total_count = len(results)
 
     logger.info(
         "lexical_search_timing query=%r project=%r scope_type=%r candidates=%d matched=%d candidate_ms=%.3f scoring_ms=%.3f sort_ms=%.3f total_ms=%.3f",
@@ -171,5 +172,6 @@ def search(
         "directory": directory,
         "limit": limit,
         "offset": offset,
+        "total_count": total_count,
         "results": results[offset : offset + limit],
     }

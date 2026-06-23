@@ -420,6 +420,7 @@ def lexical_search(
             result["limit"] = limit
             result["offset"] = offset
             result["results"] = _page_results(result["results"], limit=limit, offset=offset)
+            result["total_count"] = int(result.get("total_count", len(result.get("results", []))))
             return result
 
     results: list[dict[str, Any]] = []
@@ -451,6 +452,7 @@ def lexical_search(
             item.get("file_path", ""),
         )
     )
+    total_count = len(results)
     return {
         "query": query,
         "project": None,
@@ -458,6 +460,7 @@ def lexical_search(
         "directory": directory,
         "limit": limit,
         "offset": offset,
+        "total_count": total_count,
         "results": _page_results(results, limit=limit, offset=offset),
     }
 
@@ -544,6 +547,7 @@ def search_code(
         offset=0,
         exclude_files=exclude_files,
         exclude_symbols=exclude_symbols,
+        fetch_all=True,
     )
     excluded_files = normalize_exclusions(exclude_files)
     excluded_symbols = normalize_exclusions(exclude_symbols)
@@ -554,6 +558,7 @@ def search_code(
         exclude_files=excluded_files,
         exclude_symbols=excluded_symbols,
     )
+    total_count = len(results)
     return {
         "query": query,
         "project": project,
@@ -563,5 +568,6 @@ def search_code(
         "offset": offset,
         "lexical": lexical,
         "semantic": semantic,
+        "total_count": total_count,
         "results": _page_results(results, limit=limit, offset=offset),
     }

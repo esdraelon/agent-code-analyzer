@@ -26,6 +26,7 @@ final class SearchController extends AbstractController
         $projects = [];
         $apiQuery = [];
         $error = '';
+        $totalHits = 0;
 
         try {
             $projectsPayload = $this->api->get('/api/projects');
@@ -42,6 +43,7 @@ final class SearchController extends AbstractController
                         'file_path' => $filePath,
                     ]);
                     $results = $payload['data']['results'] ?? [];
+                    $totalHits = (int) ($payload['data']['query']['total_count'] ?? count($results));
                 }
             } elseif ($searchQuery !== '') {
                 $apiQuery = [
@@ -56,6 +58,7 @@ final class SearchController extends AbstractController
                 $apiQuery = array_filter($apiQuery, static fn (mixed $value): bool => $value !== null && $value !== '');
                 $payload = $this->api->get('/api/search/' . rawurlencode($mode), $apiQuery);
                 $results = $this->annotateSearchResults($payload['data']['results'] ?? []);
+                $totalHits = (int) ($payload['data']['query']['total_count'] ?? count($results));
             }
         } catch (\Throwable $throwable) {
             $error = $error !== '' ? $error . ' · ' . $throwable->getMessage() : $throwable->getMessage();
@@ -80,6 +83,7 @@ final class SearchController extends AbstractController
             'error' => $error,
             'activePage' => 'search',
             'apiBaseUrl' => $this->api->baseUrl(),
+            'totalHits' => $totalHits,
         ]);
     }
 

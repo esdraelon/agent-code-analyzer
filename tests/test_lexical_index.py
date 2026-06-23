@@ -98,6 +98,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
             "project": project,
             "scope_type": scope_type,
             "limit": limit,
+            "total_count": 1,
             "results": [
                 {
                     "sqlite_uri": "sqlite://projects/demo/files/1",
@@ -139,6 +140,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
                 "project": project,
                 "scope_type": scope_type,
                 "limit": limit,
+                "total_count": 1,
                 "results": [
                     {
                         "sqlite_uri": "sqlite://projects/demo/files/2",
@@ -166,6 +168,7 @@ def test_search_code_merges_lexical_and_semantic_results(monkeypatch) -> None:
     assert semantic_calls == [{"query": "hello world", "project": "demo", "scope_type": "symbol", "directory": None, "limit": 3, "offset": 0, "exclude_files": ["src/old.py"], "exclude_symbols": ["world"]}]
     assert result["lexical"]["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/1"
     assert result["semantic"]["results"][0]["sqlite_uri"] == "sqlite://projects/demo/files/2"
+    assert result["total_count"] == 1
     assert [item["sqlite_uri"] for item in result["results"]] == ["sqlite://projects/demo/files/1"]
 
 
